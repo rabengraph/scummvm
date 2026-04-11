@@ -105,6 +105,14 @@ struct Box;
 struct BoxCoords;
 struct FindObjectInRoom;
 
+// Forward declaration for the agent telemetry runtime.
+// Its implementation lives in agent_state.{h,cpp}. The runtime is owned by
+// ScummEngine and ticked at the end of each scummLoop pass.
+namespace Agent {
+class Collector;
+class Runtime;
+}
+
 // Use g_scumm from error() ONLY
 extern ScummEngine *g_scumm;
 
@@ -521,6 +529,7 @@ class ScummEngine : public Engine, public Common::Serializable {
 	friend class MacV6Gui;
 	friend class LogicHEBasketball;
 	friend class ScummEditor;
+	friend class Agent::Collector;
 
 public:
 	/* Put often used variables at the top.
@@ -556,6 +565,11 @@ public:
 	bool _quitFromScriptCmd = false;
 	bool _isHE995 = false;
 	bool _enableHECompetitiveOnlineMods = false;
+
+	/// Agent telemetry runtime. Non-null when enabled via
+	/// ConfMan "agent_telemetry" or the SCUMMVM_AGENT_TELEMETRY env var.
+	/// See engines/scumm/agent_state.h for the API surface.
+	Agent::Runtime *_agentRuntime = nullptr;
 
 	Common::Keymap *_insaneKeymap;
 

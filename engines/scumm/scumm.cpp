@@ -73,6 +73,7 @@
 #include "scumm/players/player_v4a.h"
 #include "scumm/players/player_he.h"
 #include "scumm/resource.h"
+#include "scumm/agent_state.h"
 #include "scumm/he/resource_he.h"
 #include "scumm/he/basketball/basketball.h"
 #include "scumm/he/moonbase/moonbase.h"
@@ -454,10 +455,31 @@ ScummEngine::ScummEngine(OSystem *syst, const DetectorResult &dr)
 				  _language == Common::JA_JPN;
 
 	_enableHECompetitiveOnlineMods = ConfMan.getBool("enable_competitive_mods");
+
+	// --- Agent telemetry --------------------------------------------------
+	// The Runtime is always constructed so a non-agent build can still
+	// flip it on at runtime for development. Whether it is actually
+	// enabled depends on:
+	//   - ENABLE_SCUMM_AGENT compile-time flag (from `configure
+	//     --enable-agent-telemetry`): auto-on, which is what the
+	//     agent-game-harness web build wants.
+	//   - ConfMan "agent_telemetry" key or SCUMMVM_AGENT_TELEMETRY env var:
+	//     runtime opt-in for development.
+	_agentRuntime = new Agent::Runtime();
+	_agentRuntime->setPublisher(Agent::createDefaultPublisher());
+#ifdef ENABLE_SCUMM_AGENT
+	_agentRuntime->setEnabled(true);
+#else
+	if (Agent::telemetryEnabledByConfig())
+		_agentRuntime->setEnabled(true);
+#endif
 }
 
 
 ScummEngine::~ScummEngine() {
+	delete _agentRuntime;
+	_agentRuntime = nullptr;
+
 	delete _musicEngine;
 
 	// Delete the sound object earlier than the actors
@@ -3212,6 +3234,11 @@ load_game:
 
 	/* show or hide mouse */
 	CursorMan.showMouse(_cursor.state > 0);
+
+	// Agent telemetry: one capture/publish pass per frame. Cheap no-op when
+	// disabled (Runtime::tick() returns immediately).
+	if (_agentRuntime)
+		_agentRuntime->tick(this);
 }
 
 #ifdef ENABLE_HE
