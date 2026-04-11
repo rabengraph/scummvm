@@ -24,14 +24,21 @@
 
 // --- ScummVM Agent Telemetry ----------------------------------------------
 //
-// This module is deliberately self-contained. It exposes a *fork-native*
-// telemetry API that does not depend on any particular browser-side naming
-// convention. A thin bridge layer in the harness repo is expected to wrap
-// this surface later and map it onto whatever JavaScript names the harness
-// wants (`window.__scummState`, `#scumm-state`, `[SCUMM_STATE]`, ...).
+// Fork-native telemetry surface for the agent-game-harness browser app.
+// The harness's `web/shared/bridge.js` installs two hooks on `window`
+// before loading the wasm runtime, and the Emscripten build of this
+// module publishes to them:
 //
-// Public surface
-// --------------
+//     window.__scummPublish(snapshotObject)   // full snapshot (rate-limited)
+//     window.__scummEmit(eventObject)         // small typed change event
+//
+// Both hooks receive parsed JavaScript objects. JSON is produced on the
+// C++ side (here) and parsed on the JS side by the bridge code in
+// agent_bridge_emscripten.cpp. If the hooks are missing, the calls are
+// silent no-ops — so the engine can start before the harness mounts.
+//
+// Public C++ surface
+// ------------------
 //  * Scumm::Agent::Snapshot   - POD description of the current game state
 //  * Scumm::Agent::Event      - small typed change event
 //  * Scumm::Agent::Publisher  - abstract output sink
@@ -41,21 +48,19 @@
 // Build-target plumbing
 // ---------------------
 // `createDefaultPublisher()` picks an appropriate sink at compile time:
-//   - Emscripten / web build  -> JS bridge publisher
+//   - Emscripten / web build  -> window.__scummPublish / __scummEmit
 //   - everything else         -> debug-log publisher
 //
 // The web publisher lives in agent_bridge_emscripten.cpp and is only
-// active when __EMSCRIPTEN__ is defined. The bridge it talks to is a
-// single well-known global hook (see agent_bridge_emscripten.cpp) that
-// the harness is free to rename via its own thin adapter.
+// active when __EMSCRIPTEN__ is defined.
 //
-// Runtime gating
-// --------------
-// Telemetry is off by default. It is enabled via either:
+// Build-time and runtime gating
+// -----------------------------
+// When ScummVM's configure script is invoked with `--enable-agent-telemetry`,
+// it defines ENABLE_SCUMM_AGENT and telemetry auto-enables at engine start.
+// Otherwise, telemetry stays off unless opted in via either:
 //   - ConfMan key "agent_telemetry" = "true"
 //   - environment variable SCUMMVM_AGENT_TELEMETRY=1
-// This keeps the fork useful for non-agent builds and avoids a separate
-// compile-time switch for the POC.
 // --------------------------------------------------------------------------
 
 #include "common/scummsys.h"

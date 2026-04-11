@@ -457,14 +457,22 @@ ScummEngine::ScummEngine(OSystem *syst, const DetectorResult &dr)
 	_enableHECompetitiveOnlineMods = ConfMan.getBool("enable_competitive_mods");
 
 	// --- Agent telemetry --------------------------------------------------
-	// Runtime is always constructed so the engine can flip it on later;
-	// publisher is picked per build target. Telemetry stays off unless
-	// enabled via ConfMan "agent_telemetry" or the SCUMMVM_AGENT_TELEMETRY
-	// env var — see Scumm::Agent::telemetryEnabledByConfig().
+	// The Runtime is always constructed so a non-agent build can still
+	// flip it on at runtime for development. Whether it is actually
+	// enabled depends on:
+	//   - ENABLE_SCUMM_AGENT compile-time flag (from `configure
+	//     --enable-agent-telemetry`): auto-on, which is what the
+	//     agent-game-harness web build wants.
+	//   - ConfMan "agent_telemetry" key or SCUMMVM_AGENT_TELEMETRY env var:
+	//     runtime opt-in for development.
 	_agentRuntime = new Agent::Runtime();
 	_agentRuntime->setPublisher(Agent::createDefaultPublisher());
+#ifdef ENABLE_SCUMM_AGENT
+	_agentRuntime->setEnabled(true);
+#else
 	if (Agent::telemetryEnabledByConfig())
 		_agentRuntime->setEnabled(true);
+#endif
 }
 
 

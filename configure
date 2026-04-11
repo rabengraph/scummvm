@@ -228,6 +228,8 @@ _gold=no
 # Default vkeybd/eventrec options
 _vkeybd=no
 _eventrec=no
+# SCUMM agent telemetry (fork-only; see engines/scumm/agent_state.h)
+_agent_telemetry=no
 # GUI translation options
 _translation=yes
 # Default platform settings
@@ -1047,6 +1049,11 @@ Optional Features:
   --enable-text-console    use text console instead of graphical console
   --enable-verbose-build   enable regular echoing of commands during build
                            process
+  --enable-agent-telemetry build SCUMM engine with agent telemetry
+                           publishing to window.__scummPublish /
+                           window.__scummEmit (fork-only feature; used
+                           by the agent-game-harness browser app shell)
+  --disable-agent-telemetry disable SCUMM agent telemetry (default)
   --enable-tts             build support for text to speech
   --disable-tts            don't build support for text to speech
   --disable-bink           don't build with Bink video support
@@ -1407,6 +1414,8 @@ for ac_option in $@; do
 	--disable-translation)       _translation=no         ;;
 	--enable-vkeybd)             _vkeybd=yes             ;;
 	--disable-vkeybd)            _vkeybd=no              ;;
+	--enable-agent-telemetry)    _agent_telemetry=yes    ;;
+	--disable-agent-telemetry)   _agent_telemetry=no     ;;
 	--enable-eventrecorder)      _eventrec=yes           ;;
 	--disable-eventrecorder)     _eventrec=no            ;;
 	--enable-system-printing)    _printing=yes           ;;
@@ -7186,6 +7195,14 @@ fi
 #
 define_in_config_if_yes $_vkeybd 'ENABLE_VKEYBD'
 define_in_config_if_yes $_eventrec 'ENABLE_EVENTRECORDER'
+
+#
+# SCUMM agent telemetry (fork-only).
+# When enabled, the SCUMM engine auto-starts its Agent::Runtime at boot
+# and publishes structured state to window.__scummPublish/__scummEmit
+# in Emscripten builds. See engines/scumm/agent_state.h.
+#
+define_in_config_if_yes $_agent_telemetry 'ENABLE_SCUMM_AGENT'
 
 # Check whether to build translation support
 #

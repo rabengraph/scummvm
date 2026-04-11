@@ -24,30 +24,22 @@
 // Publishes snapshots and events to JavaScript in an Emscripten/WebAssembly
 // build.
 //
-// This file's *only* contract with the outside world is a single global
-// JS hook:
+// Contract with the agent-game-harness app shell
+// ------------------------------------------------
+// The engine calls two JS hooks installed on `window` by the harness's
+// `web/shared/bridge.js` before the wasm runtime starts:
 //
-//     globalThis.__scummvmAgentHook
+//     window.__scummPublish(snapshotObject)   // full-state snapshot
+//     window.__scummEmit(eventObject)         // small typed change event
 //
-// It is the fork's native bridge surface. It is intentionally generic and
-// NOT named after any particular harness field. A thin adapter in the
-// harness repo is expected to wrap it and expose whatever JS names the
-// harness wants (`window.__scummState`, `#scumm-state`,
-// `[SCUMM_STATE]` console tags, etc.).
+// Both receive a *parsed JavaScript object*, not a JSON string — the
+// harness bridge spreads the object directly (see its publish() / emit()).
+// We JSON.parse on the C++ side of the EM_ASM boundary so the harness
+// stays schema-ignorant.
 //
-// Hook shape (JavaScript):
-//
-//     globalThis.__scummvmAgentHook = {
-//         // Called with a JSON string containing a full snapshot whenever
-//         // the engine publishes one (rate-limited, ~10 Hz).
-//         onSnapshot(json) {},
-//
-//         // Called with a JSON string containing a small typed event.
-//         onEvent(json) {},
-//     };
-//
-// If `__scummvmAgentHook` is absent or a method is missing, the call is a
-// no-op — so the engine can start before the harness page has attached.
+// If the hooks are missing (harness hasn't installed bridge.js yet, or
+// the fork is running in a non-harness page), the calls are silent
+// no-ops — so the engine can start before the harness page has mounted.
 // --------------------------------------------------------------------------
 
 #include "scumm/agent_state.h"
@@ -61,25 +53,33 @@ namespace Agent {
 
 namespace {
 
-// We pass the JSON payload into JavaScript land via EM_ASM_. The JS side
-// receives a UTF-8 C-string pointer; UTF8ToString decodes it.
-//
-// We look up `globalThis.__scummvmAgentHook` each time rather than caching,
-// so the harness can install/replace the hook at any point in its lifetime
-// (e.g. after the page has mounted).
+// We look up `window.__scummPublish` / `window.__scummEmit` on every call
+// rather than caching, so the harness can install or replace them at any
+// point in its lifetime (e.g. after bridge.js is loaded, or after
+// navigating to /game).
 
 void jsPublishSnapshot(const char *json) {
 	// clang-format off
 	EM_ASM({
 		try {
-			var hook = (typeof globalThis !== 'undefined') ? globalThis.__scummvmAgentHook : null;
-			if (hook && typeof hook.onSnapshot === 'function') {
-				hook.onSnapshot(UTF8ToString($0));
+			if (typeof window === 'undefined') return;
+			var fn = window.__scummPublish;
+			if (typeof fn !== 'function') return;
+			var text = UTF8ToString($0);
+			var obj;
+			try {
+				obj = JSON.parse(text);
+			} catch (parseErr) {
+				if (typeof console !== 'undefined' && console.error) {
+					console.error('[scummvm-agent] snapshot JSON parse failed:', parseErr, text);
+				}
+				return;
 			}
+			fn(obj);
 		} catch (e) {
 			// Swallow — the engine must not crash because of a broken hook.
 			if (typeof console !== 'undefined' && console.error) {
-				console.error('[scummvm-agent] onSnapshot threw:', e);
+				console.error('[scummvm-agent] __scummPublish threw:', e);
 			}
 		}
 	}, json);
@@ -90,13 +90,23 @@ void jsPublishEvent(const char *json) {
 	// clang-format off
 	EM_ASM({
 		try {
-			var hook = (typeof globalThis !== 'undefined') ? globalThis.__scummvmAgentHook : null;
-			if (hook && typeof hook.onEvent === 'function') {
-				hook.onEvent(UTF8ToString($0));
+			if (typeof window === 'undefined') return;
+			var fn = window.__scummEmit;
+			if (typeof fn !== 'function') return;
+			var text = UTF8ToString($0);
+			var obj;
+			try {
+				obj = JSON.parse(text);
+			} catch (parseErr) {
+				if (typeof console !== 'undefined' && console.error) {
+					console.error('[scummvm-agent] event JSON parse failed:', parseErr, text);
+				}
+				return;
 			}
+			fn(obj);
 		} catch (e) {
 			if (typeof console !== 'undefined' && console.error) {
-				console.error('[scummvm-agent] onEvent threw:', e);
+				console.error('[scummvm-agent] __scummEmit threw:', e);
 			}
 		}
 	}, json);
