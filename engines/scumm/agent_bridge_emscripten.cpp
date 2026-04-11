@@ -42,6 +42,15 @@
 // no-ops — so the engine can start before the harness page has mounted.
 // --------------------------------------------------------------------------
 
+// This translation unit has to include <emscripten.h>, which declares
+// `emscripten_get_preloaded_image_data_from_FILE(FILE *, ...)`. ScummVM's
+// common/forbidden.h macro-poisons `FILE` (and friends) to force engines
+// onto Common::File, which breaks that declaration at compile time. Opt
+// this file — and only this file — out of the guards so the emscripten
+// header can be included cleanly. This is the standard ScummVM escape
+// hatch used by other backend bridge files.
+#define FORBIDDEN_SYMBOL_ALLOW_ALL
+
 #include "scumm/agent_state.h"
 
 #ifdef __EMSCRIPTEN__
