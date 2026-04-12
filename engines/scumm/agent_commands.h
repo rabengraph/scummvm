@@ -66,8 +66,23 @@ public:
 	 */
 	static void walkTo(int x, int y);
 
+	/**
+	 * Click on an object by its ID, bypassing coordinate math.
+	 * This is the preferred way for agents to interact with objects
+	 * since it avoids coordinate space conversion issues.
+	 * @param objectId The object ID (from roomObjects[].id in the snapshot)
+	 */
+	static void clickObject(int objectId);
+
 private:
 	Commander(); // Static methods only
+
+	/**
+	 * Inject a synthetic left-click at room coordinates into the
+	 * engine's input pipeline, so processInput → checkExecVerbs
+	 * handles it on the next frame with correct _virtualMouse / VARs.
+	 */
+	static void injectClick(int roomX, int roomY);
 };
 
 } // namespace Agent

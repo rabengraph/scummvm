@@ -1674,12 +1674,15 @@ void ScummEngine::setupScumm(const Common::Path &macResourceFile) {
 
 		// The Ultimate Talkie version of Monkey Island 1 provides an automatic
 		// fallback with MIDI music when CD tracks are not found.
+		// Skip this warning dialog in agent mode to avoid blocking the game.
+#ifndef ENABLE_SCUMM_AGENT
 		if (!existExtractedCDAudioFiles(track)
 		    && !isDataAndCDAudioReadFromSameCD()
 			&& !(_game.id == GID_MONKEY && _game.features & GF_ULTIMATE_TALKIE)
 			&& !(_game.id == GID_MONKEY && _game.features & GF_DOUBLEFINE_PAK)) {
 			warnMissingExtractedCDAudio();
 		}
+#endif
 		_system->getAudioCDManager()->open();
 	}
 

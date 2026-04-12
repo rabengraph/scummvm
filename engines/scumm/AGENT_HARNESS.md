@@ -166,10 +166,28 @@ One top-level object per `window.__scummPublish(obj)` call:
       "id": 100,
       "name": "Open",
       "box": { "x": 0, "y": 144, "w": 40, "h": 8 },
-      "visible": true
+      "visible": true,
+      "kind": 0   // 0=action, 1=inventory, 2=dialog, 3=hidden
     }
     // ...
-  ]
+  ],
+
+  "walkBoxes": [
+    {
+      "id": 0,
+      "ul": { "x": 0, "y": 100 },    // upper-left
+      "ur": { "x": 200, "y": 100 },  // upper-right
+      "ll": { "x": 0, "y": 150 },    // lower-left
+      "lr": { "x": 200, "y": 150 },  // lower-right
+      "flags": 0,
+      "locked": false,
+      "invisible": false
+    }
+    // ...
+  ],
+
+  "inputLocked": false,  // true when _userPut == 0 (player input disabled)
+  "inCutscene": false    // true when cutSceneStackPointer > 0
 }
 ```
 
@@ -183,15 +201,20 @@ One top-level object per `window.__scummPublish(obj)` call:
   comes from the `rtVerb` resource and can be empty when the resource has
   not been loaded yet; fall back to rendering the numeric `id` in that
   case.
+- `verbs[].kind` classifies the verb type:
+  - `0` = action verb (Open, Close, Pick up, etc.)
+  - `1` = inventory slot
+  - `2` = dialog choice (when text is active)
+  - `3` = hidden (curmode == 0)
 - `box` in the v1 schema is **not** guaranteed to be tight or visually
   perfect — for some games the stored object rect is looser than the
   actual hit region. Good enough for an overlay that catches telemetry
   mistakes; don't rely on it for pixel-perfect click routing.
 - `walking` is true when any `MF_*` flag (except `MF_FROZEN`) is set on
   the ego actor.
-- `camera.x` is the horizontal scroll offset. For rooms wider than the
+- `camera.x` is the viewport center position. For rooms wider than the
   screen (320 pixels), convert room coordinates to screen coordinates
-  with `screen_x = room_x - camera.x`.
+  with `screen_x = room_x - camera.x + 160` (160 being half of 320).
 - `haveMsg` indicates text display state:
   - `0` = no text on screen
   - `255` (0xFF) = text is active, waiting for player to click
@@ -200,6 +223,15 @@ One top-level object per `window.__scummPublish(obj)` call:
   array will contain the dialog options (same slot system as action verbs).
 - `hover.objectId == 0` means the mouse is not over any object. Same goes
   for `hover.verbId`.
+- `inputLocked` is true when `_userPut == 0`, meaning player input is
+  disabled (during animations, text display, etc.). Agents should wait
+  for this to become false before sending commands.
+- `inCutscene` is true when `cutSceneStackPointer > 0`, indicating a
+  cutscene is playing. Commands sent during cutscenes may be ignored.
+- `walkBoxes[]` contains the walkable area quadrilaterals. Each has four
+  corners (ul, ur, ll, lr) in room coordinates. Use these to understand
+  where the ego actor can walk. `locked` walkboxes are temporarily
+  impassable; `invisible` walkboxes affect pathfinding but aren't drawn.
 - Coordinates are in virtual-screen pixels (the engine's internal
   coordinate space) — not window or canvas pixels. The harness is
   responsible for mapping them to DOM space if it wants to overlay on the
@@ -303,7 +335,13 @@ The harness exposes functions for agents to control the game:
 // Click a verb by ID (works for action verbs and dialog choices)
 window.__scummClickVerb(verbId)
 
-// Click at room coordinates
+// Click an object by ID (preferred - bypasses coordinate conversion)
+window.__scummClickObject(objectId)
+
+// Execute a complete sentence: verb + object(s)
+window.__scummDoSentence({ verb, objectA, objectB })
+
+// Click at room coordinates (use clickObject instead when possible)
 window.__scummClickAt(x, y)
 
 // Walk ego to room coordinates
@@ -320,6 +358,7 @@ These functions call into exported C functions in the WASM module:
 | JS function | C function | Header |
 |-------------|------------|--------|
 | `__scummClickVerb(id)` | `agent_click_verb(int)` | `agent_commands.h` |
+| `__scummClickObject(id)` | `agent_click_object(int)` | `agent_commands.h` |
 | `__scummClickAt(x, y)` | `agent_click_at(int, int)` | `agent_commands.h` |
 | `__scummWalkTo(x, y)` | `agent_walk_to(int, int)` | `agent_commands.h` |
 
@@ -328,13 +367,16 @@ The exported functions are marked `EMSCRIPTEN_KEEPALIVE` and accessible as
 
 ### Usage notes
 
-- All coordinates are in room/virtual-screen space (same as snapshot).
+- **Use `clickObject` to interact with objects.** It bypasses coordinate
+  space conversions by looking up the object position internally.
 - `clickVerb` triggers `runInputScript(kVerbClickArea, verbId, 1)` — the
   same code path as a real mouse click on a verb.
+- `doSentence` is a convenience wrapper that clicks the verb, then the
+  object(s) with appropriate timing.
 - Dialog choices appear in `verbs[]` when `haveMsg != 0`. Click them with
   `__scummClickVerb(verbs[i].id)`.
-- To click an object, get its `box` from `roomObjects[]` and call
-  `__scummClickAt(box.x + box.w/2, box.y + box.h/2)`.
+- Check `inputLocked` and `inCutscene` before sending commands — the engine
+  may ignore input during cutscenes or when input is disabled.
 - The action API is fire-and-forget; poll `ego.walking`, `haveMsg`, and
   `sentence.active` in the snapshot to know when actions complete.
 

@@ -118,7 +118,8 @@ struct VerbInfo {
 	Common::String name; ///< Verb display string, empty if not retrievable.
 	Rect box;
 	bool visible;
-	VerbInfo() : slot(0), id(0), visible(false) {}
+	int8 kind;           ///< 0=action, 1=inventory, 2=dialog, 3=hidden
+	VerbInfo() : slot(0), id(0), visible(false), kind(0) {}
 };
 
 struct HoverInfo {
@@ -141,6 +142,15 @@ struct SentenceInfo {
 struct CameraInfo {
 	int16 x;                 ///< Camera X offset (scroll position).
 	CameraInfo() : x(0) {}
+};
+
+struct WalkboxInfo {
+	int8 id;             ///< Walkbox index.
+	Vec2 ul, ur, ll, lr; ///< Four corners (upper-left, upper-right, lower-left, lower-right).
+	byte flags;          ///< Raw flags byte.
+	bool locked;         ///< kBoxLocked flag.
+	bool invisible;      ///< kBoxInvisible flag.
+	WalkboxInfo() : id(0), flags(0), locked(false), invisible(false) {}
 };
 
 struct Snapshot {
@@ -166,6 +176,10 @@ struct Snapshot {
 	Common::Array<ObjectInfo> roomObjects;
 	Common::Array<ObjectInfo> inventory;
 	Common::Array<VerbInfo> verbs;
+	Common::Array<WalkboxInfo> walkBoxes;
+
+	bool inputLocked;        ///< True when _userPut == 0 (input disabled).
+	bool inCutscene;         ///< True when cutSceneStackPointer > 0.
 
 	Snapshot() :
 		schemaVersion(kSchemaVersion),
@@ -177,7 +191,9 @@ struct Snapshot {
 		roomResource(0),
 		roomWidth(0),
 		roomHeight(0),
-		haveMsg(0) {}
+		haveMsg(0),
+		inputLocked(false),
+		inCutscene(false) {}
 
 	void clear() { *this = Snapshot(); }
 };
@@ -244,6 +260,7 @@ private:
 	static void fillVerbs(ScummEngine *engine, Snapshot &out);
 	static void fillHover(ScummEngine *engine, Snapshot &out);
 	static void fillSentence(ScummEngine *engine, Snapshot &out);
+	static void fillWalkboxes(ScummEngine *engine, Snapshot &out);
 
 	static Common::String safeObjectName(ScummEngine *engine, int obj);
 };

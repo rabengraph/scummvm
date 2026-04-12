@@ -33,7 +33,9 @@
 
 #include "scumm/scumm.h"
 #include "scumm/actor.h"
+#include "scumm/boxes.h"
 #include "scumm/object.h"
+#include "scumm/script.h"
 #include "scumm/verbs.h"
 
 #include <stdlib.h> // getenv
@@ -138,6 +140,24 @@ static void writeVerb(Common::String &out, const VerbInfo &v) {
 	out += ",\"box\":";
 	writeRect(out, v.box);
 	kvBool(out, "visible", v.visible, false);
+	kvInt(out, "kind", v.kind, false);
+	out += '}';
+}
+
+static void writeWalkbox(Common::String &out, const WalkboxInfo &wb) {
+	out += '{';
+	kvInt(out, "id", wb.id, true);
+	out += ",\"ul\":";
+	writeVec2(out, wb.ul);
+	out += ",\"ur\":";
+	writeVec2(out, wb.ur);
+	out += ",\"ll\":";
+	writeVec2(out, wb.ll);
+	out += ",\"lr\":";
+	writeVec2(out, wb.lr);
+	kvInt(out, "flags", wb.flags, false);
+	kvBool(out, "locked", wb.locked, false);
+	kvBool(out, "invisible", wb.invisible, false);
 	out += '}';
 }
 
@@ -214,6 +234,19 @@ Common::String snapshotToJson(const Snapshot &s) {
 		writeVerb(out, s.verbs[i]);
 	}
 	out += ']';
+
+	// walkboxes
+	out += ",\"walkBoxes\":[";
+	for (uint i = 0; i < s.walkBoxes.size(); ++i) {
+		if (i)
+			out += ',';
+		writeWalkbox(out, s.walkBoxes[i]);
+	}
+	out += ']';
+
+	// input/cutscene state
+	kvBool(out, "inputLocked", s.inputLocked, false);
+	kvBool(out, "inCutscene", s.inCutscene, false);
 
 	out += '}';
 	return out;
@@ -393,6 +426,28 @@ void Collector::fillVerbs(ScummEngine *engine, Snapshot &out) {
 		vi.box.w = (int16)(v.curRect.right - v.curRect.left);
 		vi.box.h = (int16)(v.curRect.bottom - v.curRect.top);
 
+		// Classify verb kind:
+		// 0 = action (normal verb like Open, Close, etc.)
+		// 1 = inventory slot
+		// 2 = dialog choice (when text is active and verb is positioned above verb bar)
+		// 3 = hidden (curmode == 0)
+		if (v.curmode == 0) {
+			vi.kind = 3; // hidden
+		} else if (v.saveid != 0) {
+			vi.kind = 1; // inventory slot
+		} else if (engine->_haveMsg != 0 && v.curRect.top < 144) {
+			// Dialog choices appear when text is active and positioned above the verb bar
+			// (verb bar typically starts at y=144 in classic SCUMM)
+			vi.kind = 2; // dialog choice
+		} else {
+			vi.kind = 0; // action verb
+		}
+
+		// Skip truly useless entries (no name and hidden)
+		if (vi.kind == 3) {
+			// Still include hidden verbs so agent knows what exists
+		}
+
 		// Verb display string is stored in rtVerb resources. We try to fetch
 		// it, but fall back to an empty name if unavailable — the harness can
 		// then render the id instead.
@@ -427,6 +482,31 @@ void Collector::fillSentence(ScummEngine *engine, Snapshot &out) {
 	}
 }
 
+void Collector::fillWalkboxes(ScummEngine *engine, Snapshot &out) {
+	out.walkBoxes.clear();
+	byte numBoxes = engine->getNumBoxes();
+	if (numBoxes == 0)
+		return;
+
+	out.walkBoxes.reserve(numBoxes);
+	for (byte i = 0; i < numBoxes; ++i) {
+		BoxCoords coords = engine->getBoxCoordinates(i);
+		byte flags = engine->getBoxFlags(i);
+
+		WalkboxInfo wi;
+		wi.id = i;
+		wi.ul = Vec2((int16)coords.ul.x, (int16)coords.ul.y);
+		wi.ur = Vec2((int16)coords.ur.x, (int16)coords.ur.y);
+		wi.ll = Vec2((int16)coords.ll.x, (int16)coords.ll.y);
+		wi.lr = Vec2((int16)coords.lr.x, (int16)coords.lr.y);
+		wi.flags = flags;
+		wi.locked = (flags & kBoxLocked) != 0;
+		wi.invisible = (flags & kBoxInvisible) != 0;
+
+		out.walkBoxes.push_back(wi);
+	}
+}
+
 bool Collector::capture(ScummEngine *engine, Snapshot &out) {
 	if (!engine)
 		return false;
@@ -455,6 +535,11 @@ bool Collector::capture(ScummEngine *engine, Snapshot &out) {
 	fillRoomObjects(engine, out);
 	fillInventory(engine, out);
 	fillVerbs(engine, out);
+	fillWalkboxes(engine, out);
+
+	// Input state
+	out.inputLocked = (engine->_userPut == 0);
+	out.inCutscene = (engine->vm.cutSceneStackPointer > 0);
 
 	return true;
 }

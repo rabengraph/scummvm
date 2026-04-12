@@ -72,36 +72,68 @@ void Commander::clickVerb(int verbId) {
 	g_commandEngine->runInputScript(kVerbClickArea, verbId, 1);
 }
 
+// ---------------------------------------------------------------------------
+// Instead of calling runInputScript() directly (which bypasses
+// processInput → checkExecVerbs and leaves _virtualMouse / VARs stale),
+// we set _mouse to the correct *screen* coordinates and raise the
+// left-button-clicked flag.  The engine's own main-loop then runs:
+//
+//   processInput()          – computes _virtualMouse from _mouse
+//   scummLoop_updateScummVars() – copies _virtualMouse → VAR_VIRT_MOUSE_X/Y
+//   checkExecVerbs()        – dispatches runInputScript with correct VARs
+//
+// This guarantees the walk target the SCUMM scripts read is consistent.
+//
+// All helpers live inside Commander so they have friend access to
+// ScummEngine's protected members.
+// ---------------------------------------------------------------------------
+
+void Commander::injectClick(int roomX, int roomY) {
+	// Convert room coords → screen coords for _mouse.
+	// processInput() does the inverse: _virtualMouse.x = _mouse.x + vs->xstart
+	VirtScreen *vs = &g_commandEngine->_virtscr[kMainVirtScreen];
+	int screenX = roomX - vs->xstart;
+	int screenY = roomY + vs->topline;
+
+	screenX = CLIP(screenX, 0, (int)g_commandEngine->_screenWidth - 1);
+	screenY = CLIP(screenY, 0, (int)g_commandEngine->_screenHeight - 1);
+
+	g_commandEngine->_mouse.x = screenX;
+	g_commandEngine->_mouse.y = screenY;
+
+	// msClicked = 2 (see input.cpp MouseButtonStatus enum)
+	g_commandEngine->_leftBtnPressed |= 2;
+}
+
 void Commander::clickAt(int x, int y) {
 	if (!g_commandEngine)
 		return;
 
-	// Update the virtual mouse position
-	g_commandEngine->_mouse.x = x;
-	g_commandEngine->_mouse.y = y;
-
-	// Find if there's an object at this position
-	int obj = g_commandEngine->findObject(x, y);
-
-	if (obj > 0) {
-		// Click on object - this will use the currently selected verb
-		g_commandEngine->runInputScript(kSceneClickArea, obj, 1);
-	} else {
-		// Click on empty scene - typically triggers walk-to
-		g_commandEngine->runInputScript(kSceneClickArea, 0, 1);
-	}
+	injectClick(x, y);
 }
 
 void Commander::walkTo(int x, int y) {
 	if (!g_commandEngine)
 		return;
 
-	// Update mouse position
-	g_commandEngine->_mouse.x = x;
-	g_commandEngine->_mouse.y = y;
+	injectClick(x, y);
+}
 
-	// Click on scene with no object - triggers walk
-	g_commandEngine->runInputScript(kSceneClickArea, 0, 1);
+void Commander::clickObject(int objectId) {
+	if (!g_commandEngine)
+		return;
+
+	// Get object center coordinates (room space)
+	int x, y;
+	g_commandEngine->getObjectXYPos(objectId, x, y);
+
+	if (x == 0 && y == 0) {
+		// Object not found or has no position - try direct click anyway
+		g_commandEngine->runInputScript(kSceneClickArea, objectId, 1);
+		return;
+	}
+
+	injectClick(x, y);
 }
 
 } // namespace Agent
@@ -142,6 +174,18 @@ void agent_click_at(int x, int y) {
 EMSCRIPTEN_KEEPALIVE
 void agent_walk_to(int x, int y) {
 	Scumm::Agent::Commander::walkTo(x, y);
+}
+
+/**
+ * Click on an object by its ID. This is the preferred method for agents
+ * since it bypasses coordinate space conversions entirely - the engine
+ * looks up the object position and handles the click internally.
+ *
+ * @param objectId The object ID (from roomObjects[].id in the snapshot)
+ */
+EMSCRIPTEN_KEEPALIVE
+void agent_click_object(int objectId) {
+	Scumm::Agent::Commander::clickObject(objectId);
 }
 
 } // extern "C"
