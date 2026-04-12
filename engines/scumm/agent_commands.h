@@ -74,6 +74,30 @@ public:
 	 */
 	static void clickObject(int objectId);
 
+	/**
+	 * Execute a complete sentence atomically: verb + objectA [+ objectB].
+	 * This queues directly into the engine's sentence stack, bypassing
+	 * the two-step click-verb-then-click-object pattern which is
+	 * timing-sensitive and unreliable from an external agent.
+	 *
+	 * @param verb    Verb ID (from verbs[].id in the snapshot)
+	 * @param objectA First object ID (from roomObjects[].id or inventory[].id)
+	 * @param objectB Second object ID for two-object verbs like "Use X with Y", or 0
+	 * @return true if the sentence was queued, false if engine not ready or queue full
+	 */
+	static bool doSentence(int verb, int objectA, int objectB);
+
+	/**
+	 * Dismiss any currently displayed message / actor speech.
+	 * Calls the engine's stopTalk() directly, which clears _haveMsg
+	 * and stops talk animation. This is needed because the normal
+	 * injectClick() path doesn't reliably dismiss messages (the
+	 * message system is script-driven, not input-driven).
+	 *
+	 * Safe to call when no message is showing (no-op).
+	 */
+	static void skipMessage();
+
 private:
 	Commander(); // Static methods only
 

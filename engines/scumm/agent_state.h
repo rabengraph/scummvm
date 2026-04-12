@@ -168,6 +168,8 @@ struct Snapshot {
 	int roomHeight;
 	CameraInfo camera;       ///< Camera/viewport offset.
 	int haveMsg;             ///< Text display state: 0=none, 0xFF=active, 1=ending.
+	Common::String msgText;  ///< Currently displayed message text (from _charsetBuffer).
+	int talkingActor;        ///< Actor currently speaking (-1 or 0xFF if none).
 
 	EgoInfo ego;
 	HoverInfo hover;
@@ -192,6 +194,7 @@ struct Snapshot {
 		roomWidth(0),
 		roomHeight(0),
 		haveMsg(0),
+		talkingActor(-1),
 		inputLocked(false),
 		inCutscene(false) {}
 

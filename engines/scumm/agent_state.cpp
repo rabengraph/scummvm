@@ -178,6 +178,10 @@ Common::String snapshotToJson(const Snapshot &s) {
 	kvInt(out, "x", s.camera.x, true);
 	out += '}';
 	kvInt(out, "haveMsg", s.haveMsg, false);
+	if (!s.msgText.empty()) {
+		kvString(out, "msgText", s.msgText, false);
+	}
+	kvInt(out, "talkingActor", s.talkingActor, false);
 
 	// ego
 	out += ",\"ego\":{";
@@ -528,6 +532,29 @@ bool Collector::capture(ScummEngine *engine, Snapshot &out) {
 	out.roomHeight = engine->_roomHeight;
 	out.camera.x = (int16)engine->camera._cur.x;
 	out.haveMsg = (int)engine->_haveMsg;
+
+	// Extract current message text from the charset buffer.
+	// _charsetBuffer holds the full message string; _charsetBufPos is
+	// how far the engine has rendered so far (letter-by-letter display).
+	// We expose the entire buffer content so the agent sees the full
+	// message even while it's being typed out on screen.
+	if (engine->_haveMsg != 0 && engine->_charsetBuffer[0] != 0) {
+		// The buffer may contain SCUMM control codes (0x01-0x0F) for
+		// color changes, newlines, etc. Strip non-printable characters
+		// and produce a clean UTF-8 string.
+		Common::String raw((const char *)engine->_charsetBuffer);
+		Common::String clean;
+		for (uint i = 0; i < raw.size(); ++i) {
+			char c = raw[i];
+			if ((unsigned char)c >= 0x20 || c == '\n') {
+				clean += c;
+			}
+			// Skip SCUMM control codes (0x01-0x1F except newline)
+		}
+		out.msgText = clean;
+	}
+
+	out.talkingActor = engine->getTalkingActor();
 
 	fillEgo(engine, out);
 	fillHover(engine, out);

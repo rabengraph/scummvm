@@ -136,6 +136,30 @@ void Commander::clickObject(int objectId) {
 	injectClick(x, y);
 }
 
+bool Commander::doSentence(int verb, int objectA, int objectB) {
+	if (!g_commandEngine)
+		return false;
+
+	// Guard against queue overflow (NUM_SENTENCE = 6).
+	if (g_commandEngine->_sentenceNum >= NUM_SENTENCE)
+		return false;
+
+	// Delegate to the engine's own doSentence(), which pushes onto the
+	// _sentence[] stack. checkAndRunSentenceScript() will pop and
+	// execute it on the next frame — no timing races.
+	g_commandEngine->doSentence(verb, objectA, objectB);
+	return true;
+}
+
+void Commander::skipMessage() {
+	if (!g_commandEngine)
+		return;
+
+	// stopTalk() clears _haveMsg, stops actor talk animation, and
+	// resets the charset state. Safe to call when nothing is playing.
+	g_commandEngine->stopTalk();
+}
+
 } // namespace Agent
 } // namespace Scumm
 
@@ -186,6 +210,30 @@ void agent_walk_to(int x, int y) {
 EMSCRIPTEN_KEEPALIVE
 void agent_click_object(int objectId) {
 	Scumm::Agent::Commander::clickObject(objectId);
+}
+
+/**
+ * Execute a complete sentence atomically: verb + objectA [+ objectB].
+ * Queues directly into the engine's sentence stack — no timing races.
+ *
+ * @param verb    Verb ID (from verbs[].id in the snapshot)
+ * @param objectA First object ID (from roomObjects[].id or inventory[].id)
+ * @param objectB Second object ID for two-object verbs (e.g. "Use X with Y"), or 0
+ * @return 1 if queued successfully, 0 if engine not ready or sentence queue full
+ */
+EMSCRIPTEN_KEEPALIVE
+int agent_do_sentence(int verb, int objectA, int objectB) {
+	return Scumm::Agent::Commander::doSentence(verb, objectA, objectB) ? 1 : 0;
+}
+
+/**
+ * Dismiss any currently displayed message or actor speech.
+ * Call this to advance past dialog text. Safe to call when no
+ * message is showing (no-op).
+ */
+EMSCRIPTEN_KEEPALIVE
+void agent_skip_message() {
+	Scumm::Agent::Commander::skipMessage();
 }
 
 } // extern "C"
