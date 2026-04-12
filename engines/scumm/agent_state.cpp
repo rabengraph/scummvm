@@ -154,6 +154,10 @@ Common::String snapshotToJson(const Snapshot &s) {
 	kvInt(out, "roomResource", s.roomResource, false);
 	kvInt(out, "roomWidth", s.roomWidth, false);
 	kvInt(out, "roomHeight", s.roomHeight, false);
+	out += ",\"camera\":{";
+	kvInt(out, "x", s.camera.x, true);
+	out += '}';
+	kvInt(out, "haveMsg", s.haveMsg, false);
 
 	// ego
 	out += ",\"ego\":{";
@@ -442,6 +446,8 @@ bool Collector::capture(ScummEngine *engine, Snapshot &out) {
 	out.roomResource = engine->_roomResource;
 	out.roomWidth = engine->_roomWidth;
 	out.roomHeight = engine->_roomHeight;
+	out.camera.x = (int16)engine->camera._cur.x;
+	out.haveMsg = (int)engine->_haveMsg;
 
 	fillEgo(engine, out);
 	fillHover(engine, out);

@@ -138,6 +138,11 @@ struct SentenceInfo {
 	SentenceInfo() : verb(0), preposition(0), objectA(0), objectB(0), active(false) {}
 };
 
+struct CameraInfo {
+	int16 x;                 ///< Camera X offset (scroll position).
+	CameraInfo() : x(0) {}
+};
+
 struct Snapshot {
 	int schemaVersion;       ///< Agent::kSchemaVersion
 	uint32 seq;              ///< Monotonic counter, one per emit.
@@ -151,6 +156,8 @@ struct Snapshot {
 	int roomResource;        ///< _roomResource
 	int roomWidth;
 	int roomHeight;
+	CameraInfo camera;       ///< Camera/viewport offset.
+	int haveMsg;             ///< Text display state: 0=none, 0xFF=active, 1=ending.
 
 	EgoInfo ego;
 	HoverInfo hover;
@@ -169,7 +176,8 @@ struct Snapshot {
 		room(0),
 		roomResource(0),
 		roomWidth(0),
-		roomHeight(0) {}
+		roomHeight(0),
+		haveMsg(0) {}
 
 	void clear() { *this = Snapshot(); }
 };

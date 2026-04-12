@@ -3,6 +3,7 @@ MODULE := engines/scumm
 MODULE_OBJS := \
 	actor.o \
 	agent_bridge_emscripten.o \
+	agent_commands.o \
 	agent_state.o \
 	akos.o \
 	base-costume.o \

@@ -110,6 +110,7 @@ struct FindObjectInRoom;
 // ScummEngine and ticked at the end of each scummLoop pass.
 namespace Agent {
 class Collector;
+class Commander;
 class Runtime;
 }
 
@@ -530,6 +531,7 @@ class ScummEngine : public Engine, public Common::Serializable {
 	friend class LogicHEBasketball;
 	friend class ScummEditor;
 	friend class Agent::Collector;
+	friend class Agent::Commander;
 
 public:
 	/* Put often used variables at the top.

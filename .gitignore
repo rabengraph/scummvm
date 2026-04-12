@@ -299,6 +299,11 @@ android_project
 dists/emscripten/libs/
 dists/emscripten/games/
 dists/emscripten/emsdk-*
+/scummvm.js
+/scummvm.wasm
+/scummvm.html
+/scummvm-conf.js
+/scummvm-conf.wasm
 
 #Ignore Atari/FreeMiNT files
 scummvm.prg

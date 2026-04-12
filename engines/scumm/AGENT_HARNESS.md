@@ -107,6 +107,8 @@ One top-level object per `window.__scummPublish(obj)` call:
   "roomResource": 10,
   "roomWidth": 320,
   "roomHeight": 200,
+  "camera": { "x": 0 },        // scroll offset; screen_x = room_x - camera.x
+  "haveMsg": 0,                // text state: 0=none, 255=active, 1=ending
 
   "ego": {
     "id": 1,                   // actor id of VAR_EGO (-1 if unknown)
@@ -187,6 +189,15 @@ One top-level object per `window.__scummPublish(obj)` call:
   mistakes; don't rely on it for pixel-perfect click routing.
 - `walking` is true when any `MF_*` flag (except `MF_FROZEN`) is set on
   the ego actor.
+- `camera.x` is the horizontal scroll offset. For rooms wider than the
+  screen (320 pixels), convert room coordinates to screen coordinates
+  with `screen_x = room_x - camera.x`.
+- `haveMsg` indicates text display state:
+  - `0` = no text on screen
+  - `255` (0xFF) = text is active, waiting for player to click
+  - `1` = text is ending/clearing
+  When `haveMsg != 0` and dialog choices are present, the `verbs[]`
+  array will contain the dialog options (same slot system as action verbs).
 - `hover.objectId == 0` means the mouse is not over any object. Same goes
   for `hover.verbId`.
 - Coordinates are in virtual-screen pixels (the engine's internal
@@ -284,13 +295,58 @@ either:
 
 ---
 
-## 9. What the harness should *not* rely on yet
+## 9. Action API (agent → engine)
+
+The harness exposes functions for agents to control the game:
+
+```js
+// Click a verb by ID (works for action verbs and dialog choices)
+window.__scummClickVerb(verbId)
+
+// Click at room coordinates
+window.__scummClickAt(x, y)
+
+// Walk ego to room coordinates
+window.__scummWalkTo(x, y)
+
+// Check if action API is ready
+window.__scummActionsReady()
+```
+
+### Implementation
+
+These functions call into exported C functions in the WASM module:
+
+| JS function | C function | Header |
+|-------------|------------|--------|
+| `__scummClickVerb(id)` | `agent_click_verb(int)` | `agent_commands.h` |
+| `__scummClickAt(x, y)` | `agent_click_at(int, int)` | `agent_commands.h` |
+| `__scummWalkTo(x, y)` | `agent_walk_to(int, int)` | `agent_commands.h` |
+
+The exported functions are marked `EMSCRIPTEN_KEEPALIVE` and accessible as
+`Module._agent_*` once the WASM loads. The harness's `bridge.js` wraps them.
+
+### Usage notes
+
+- All coordinates are in room/virtual-screen space (same as snapshot).
+- `clickVerb` triggers `runInputScript(kVerbClickArea, verbId, 1)` — the
+  same code path as a real mouse click on a verb.
+- Dialog choices appear in `verbs[]` when `haveMsg != 0`. Click them with
+  `__scummClickVerb(verbs[i].id)`.
+- To click an object, get its `box` from `roomObjects[]` and call
+  `__scummClickAt(box.x + box.w/2, box.y + box.h/2)`.
+- The action API is fire-and-forget; poll `ego.walking`, `haveMsg`, and
+  `sentence.active` in the snapshot to know when actions complete.
+
+---
+
+## 10. What the harness should *not* rely on yet (caveats)
 
 - **Object `box` precision.** Good enough for a rough overlay; do not use
   as a hit test.
-- **Dialogue choices.** The v1 schema does not yet expose dialog options.
-  They will arrive as a new top-level field when added; the harness should
-  treat the snapshot as additive.
+- **Dialogue choices.** Dialog options appear in `verbs[]` when `haveMsg != 0`.
+  They use the same slot system as action verbs. A dedicated `dialogChoices[]`
+  field may be added later for clearer separation.
 - **SCUMM version differences.** The collector is engine-generic but has
   only been exercised in the abstract. Behaviour on HE games, v0–v3, and
   v7–v8 may be less useful than on v5–v6 LucasArts adventures.
@@ -298,7 +354,7 @@ either:
 
 ---
 
-## 10. Schema versioning
+## 11. Schema versioning
 
 Every snapshot carries `schema: 1`. The harness should read this and either:
 
@@ -312,7 +368,7 @@ unknown top-level keys.
 
 ---
 
-## 11. Source of truth
+## 12. Source of truth
 
 If anything in this document conflicts with the actual code, the code
 wins. The authoritative surfaces are:
@@ -320,7 +376,8 @@ wins. The authoritative surfaces are:
 - Snapshot / Event layout → `engines/scumm/agent_state.h`
 - JSON serialization → `engines/scumm/agent_state.cpp` (`snapshotToJson`,
   `eventToJson`)
-- JS hook plumbing → `engines/scumm/agent_bridge_emscripten.cpp`
+- JS hook plumbing (outbound) → `engines/scumm/agent_bridge_emscripten.cpp`
+- Action API (inbound) → `engines/scumm/agent_commands.{h,cpp}`
 - Build flag → `configure`, `config.h`
 - Engine hook point → `engines/scumm/scumm.cpp` end of
   `ScummEngine::scummLoop()`

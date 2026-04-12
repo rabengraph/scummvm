@@ -73,6 +73,7 @@
 #include "scumm/players/player_v4a.h"
 #include "scumm/players/player_he.h"
 #include "scumm/resource.h"
+#include "scumm/agent_commands.h"
 #include "scumm/agent_state.h"
 #include "scumm/he/resource_he.h"
 #include "scumm/he/basketball/basketball.h"
@@ -473,10 +474,15 @@ ScummEngine::ScummEngine(OSystem *syst, const DetectorResult &dr)
 	if (Agent::telemetryEnabledByConfig())
 		_agentRuntime->setEnabled(true);
 #endif
+
+	// Set up the command engine for agent action API.
+	Agent::setCommandEngine(this);
 }
 
 
 ScummEngine::~ScummEngine() {
+	Agent::clearCommandEngine();
+
 	delete _agentRuntime;
 	_agentRuntime = nullptr;
 
