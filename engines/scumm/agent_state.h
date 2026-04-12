@@ -122,6 +122,17 @@ struct VerbInfo {
 	VerbInfo() : slot(0), id(0), visible(false), kind(0) {}
 };
 
+struct ActorInfo {
+	int id;              ///< Actor number.
+	Common::String name; ///< Human-readable name, empty if unavailable.
+	int room;            ///< Room the actor is currently in.
+	Vec2 pos;            ///< Virtual-screen pixel position.
+	int facing;          ///< Direction.
+	bool walking;        ///< True if actor is moving.
+	int costume;
+	ActorInfo() : id(0), room(0), facing(0), walking(false), costume(0) {}
+};
+
 struct HoverInfo {
 	int objectId;                 ///< Currently hovered object (0 if none).
 	Common::String objectName;
@@ -177,7 +188,9 @@ struct Snapshot {
 
 	Common::Array<ObjectInfo> roomObjects;
 	Common::Array<ObjectInfo> inventory;
+	Common::Array<ActorInfo> actors;      ///< Actors currently in this room (excluding ego).
 	Common::Array<VerbInfo> verbs;
+	Common::Array<VerbInfo> dialogChoices;  ///< Subset of verbs with kind==2 (dialog), only when haveMsg!=0.
 	Common::Array<WalkboxInfo> walkBoxes;
 
 	bool inputLocked;        ///< True when _userPut == 0 (input disabled).
@@ -258,6 +271,7 @@ private:
 	Collector();
 
 	static void fillEgo(ScummEngine *engine, Snapshot &out);
+	static void fillActors(ScummEngine *engine, Snapshot &out);
 	static void fillRoomObjects(ScummEngine *engine, Snapshot &out);
 	static void fillInventory(ScummEngine *engine, Snapshot &out);
 	static void fillVerbs(ScummEngine *engine, Snapshot &out);

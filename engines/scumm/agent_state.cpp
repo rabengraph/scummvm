@@ -34,6 +34,7 @@
 #include "scumm/scumm.h"
 #include "scumm/actor.h"
 #include "scumm/boxes.h"
+#include "scumm/gfx.h"
 #include "scumm/object.h"
 #include "scumm/script.h"
 #include "scumm/verbs.h"
@@ -144,6 +145,19 @@ static void writeVerb(Common::String &out, const VerbInfo &v) {
 	out += '}';
 }
 
+static void writeActor(Common::String &out, const ActorInfo &a) {
+	out += '{';
+	kvInt(out, "id", a.id, true);
+	kvString(out, "name", a.name, false);
+	kvInt(out, "room", a.room, false);
+	out += ",\"pos\":";
+	writeVec2(out, a.pos);
+	kvInt(out, "facing", a.facing, false);
+	kvBool(out, "walking", a.walking, false);
+	kvInt(out, "costume", a.costume, false);
+	out += '}';
+}
+
 static void writeWalkbox(Common::String &out, const WalkboxInfo &wb) {
 	out += '{';
 	kvInt(out, "id", wb.id, true);
@@ -230,12 +244,30 @@ Common::String snapshotToJson(const Snapshot &s) {
 	}
 	out += ']';
 
+	// actors (in current room, excluding ego)
+	out += ",\"actors\":[";
+	for (uint i = 0; i < s.actors.size(); ++i) {
+		if (i)
+			out += ',';
+		writeActor(out, s.actors[i]);
+	}
+	out += ']';
+
 	// verbs
 	out += ",\"verbs\":[";
 	for (uint i = 0; i < s.verbs.size(); ++i) {
 		if (i)
 			out += ',';
 		writeVerb(out, s.verbs[i]);
+	}
+	out += ']';
+
+	// dialog choices (convenience subset of verbs with kind==2)
+	out += ",\"dialogChoices\":[";
+	for (uint i = 0; i < s.dialogChoices.size(); ++i) {
+		if (i)
+			out += ',';
+		writeVerb(out, s.dialogChoices[i]);
 	}
 	out += ']';
 
@@ -413,8 +445,15 @@ void Collector::fillInventory(ScummEngine *engine, Snapshot &out) {
 
 void Collector::fillVerbs(ScummEngine *engine, Snapshot &out) {
 	out.verbs.clear();
+	out.dialogChoices.clear();
 	if (!engine->_verbs || engine->_numVerbs <= 0)
 		return;
+
+	// The verb virtual screen's topline marks where the verb/inventory
+	// area starts.  Anything above it is "main screen" territory —
+	// visible verbs placed there are dialog choices, not action verbs.
+	const int verbAreaTop = engine->_virtscr[kVerbVirtScreen].topline;
+
 	// Verb slot 0 is the sentinel / not-in-use slot.
 	for (int i = 1; i < engine->_numVerbs; ++i) {
 		const VerbSlot &v = engine->_verbs[i];
@@ -433,15 +472,17 @@ void Collector::fillVerbs(ScummEngine *engine, Snapshot &out) {
 		// Classify verb kind:
 		// 0 = action (normal verb like Open, Close, etc.)
 		// 1 = inventory slot
-		// 2 = dialog choice (when text is active and verb is positioned above verb bar)
+		// 2 = dialog choice (positioned above verb bar area)
 		// 3 = hidden (curmode == 0)
 		if (v.curmode == 0) {
 			vi.kind = 3; // hidden
 		} else if (v.saveid != 0) {
 			vi.kind = 1; // inventory slot
-		} else if (engine->_haveMsg != 0 && v.curRect.top < 144) {
-			// Dialog choices appear when text is active and positioned above the verb bar
-			// (verb bar typically starts at y=144 in classic SCUMM)
+		} else if (v.curRect.top < verbAreaTop && v.curRect.top > 0) {
+			// Dialog choices are visible, non-inventory verbs positioned
+			// above the verb area (verbAreaTop, typically 144 in classic
+			// SCUMM v5).  We also require top > 0 to exclude verbs that
+			// haven't been positioned yet (curRect is zero-initialized).
 			vi.kind = 2; // dialog choice
 		} else {
 			vi.kind = 0; // action verb
@@ -452,14 +493,31 @@ void Collector::fillVerbs(ScummEngine *engine, Snapshot &out) {
 			// Still include hidden verbs so agent knows what exists
 		}
 
-		// Verb display string is stored in rtVerb resources. We try to fetch
-		// it, but fall back to an empty name if unavailable — the harness can
-		// then render the id instead.
-		const byte *verbText = engine->getResourceAddress(rtVerb, i);
-		if (verbText) {
-			vi.name = Common::String((const char *)verbText);
+		// Verb display string is stored in rtVerb resources. We need
+		// to decode it through convertMessageToString() (the same path
+		// drawVerb uses) to handle SCUMM control codes and 0xFF prefixes.
+		// Image-type verbs (kImageVerbType) have no text — skip them.
+		if (v.type == kTextVerbType) {
+			const byte *raw = engine->getResourceAddress(rtVerb, i);
+			if (raw) {
+				byte decoded[270];
+				memset(decoded, 0, sizeof(decoded));
+				engine->convertMessageToString(raw, decoded, sizeof(decoded));
+
+				// Skip any leading 0xFF control sequences (4 bytes each).
+				const byte *msg = decoded;
+				while (*msg == 0xFF)
+					msg += 4;
+
+				vi.name = Common::String((const char *)msg);
+			}
 		}
 		out.verbs.push_back(vi);
+
+		// Collect dialog choices into their own array for easy agent access.
+		if (vi.kind == 2 && vi.visible && !vi.name.empty()) {
+			out.dialogChoices.push_back(vi);
+		}
 	}
 }
 
@@ -483,6 +541,46 @@ void Collector::fillSentence(ScummEngine *engine, Snapshot &out) {
 		out.sentence.objectA = (int)st.objectA;
 		out.sentence.objectB = (int)st.objectB;
 		out.sentence.active = true;
+	}
+}
+
+void Collector::fillActors(ScummEngine *engine, Snapshot &out) {
+	out.actors.clear();
+	if (!engine->_actors || engine->_numActors <= 0)
+		return;
+
+	int egoId = (engine->VAR_EGO != 0xFF) ? engine->VAR(engine->VAR_EGO) : -1;
+
+	// Actor 0 is a sentinel in SCUMM; start at 1.
+	for (int i = 1; i < engine->_numActors; ++i) {
+		Actor *a = engine->_actors[i];
+		if (!a)
+			continue;
+		// Skip ego — already reported in out.ego.
+		if (i == egoId)
+			continue;
+		// Only include actors in the current room.
+		if (a->getRoom() != engine->_currentRoom)
+			continue;
+		// Skip actors with no costume (not rendered / inactive).
+		if (a->_costume == 0)
+			continue;
+
+		ActorInfo ai;
+		ai.id = i;
+		Common::Point p = a->getRealPos();
+		ai.pos = Vec2((int16)p.x, (int16)p.y);
+		ai.room = a->getRoom();
+		ai.facing = a->getFacing();
+		ai.walking = (a->_moving & ~MF_FROZEN) != 0;
+		ai.costume = (int)a->_costume;
+
+		// Actor names: getActorName() is available on Actor instances.
+		const byte *n = a->getActorName();
+		if (n && n[0])
+			ai.name = Common::String((const char *)n);
+
+		out.actors.push_back(ai);
 	}
 }
 
@@ -536,20 +634,31 @@ bool Collector::capture(ScummEngine *engine, Snapshot &out) {
 	// Extract current message text from the charset buffer.
 	// _charsetBuffer holds the full message string; _charsetBufPos is
 	// how far the engine has rendered so far (letter-by-letter display).
-	// We expose the entire buffer content so the agent sees the full
-	// message even while it's being typed out on screen.
+	// We decode it through convertMessageToString() (same as verb text)
+	// to handle SCUMM control codes, then strip any remaining artifacts.
 	if (engine->_haveMsg != 0 && engine->_charsetBuffer[0] != 0) {
-		// The buffer may contain SCUMM control codes (0x01-0x0F) for
-		// color changes, newlines, etc. Strip non-printable characters
-		// and produce a clean UTF-8 string.
-		Common::String raw((const char *)engine->_charsetBuffer);
+		byte decoded[512];
+		memset(decoded, 0, sizeof(decoded));
+		engine->convertMessageToString(engine->_charsetBuffer, decoded, sizeof(decoded));
+
+		// Skip leading 0xFF control sequences.
+		const byte *msg = decoded;
+		while (*msg == 0xFF)
+			msg += 4;
+
+		// Final cleanup: strip remaining non-printable chars except
+		// newline and space, and normalize ` and ^ artifacts.
 		Common::String clean;
-		for (uint i = 0; i < raw.size(); ++i) {
-			char c = raw[i];
-			if ((unsigned char)c >= 0x20 || c == '\n') {
-				clean += c;
+		for (const byte *p = msg; *p; ++p) {
+			byte c = *p;
+			if (c == 0xFF) {
+				// Skip inline 0xFF control sequences (4 bytes total).
+				p += 3;
+				continue;
 			}
-			// Skip SCUMM control codes (0x01-0x1F except newline)
+			if (c >= 0x20 || c == '\n') {
+				clean += (char)c;
+			}
 		}
 		out.msgText = clean;
 	}
@@ -557,6 +666,7 @@ bool Collector::capture(ScummEngine *engine, Snapshot &out) {
 	out.talkingActor = engine->getTalkingActor();
 
 	fillEgo(engine, out);
+	fillActors(engine, out);
 	fillHover(engine, out);
 	fillSentence(engine, out);
 	fillRoomObjects(engine, out);
@@ -565,7 +675,9 @@ bool Collector::capture(ScummEngine *engine, Snapshot &out) {
 	fillWalkboxes(engine, out);
 
 	// Input state
-	out.inputLocked = (engine->_userPut == 0);
+	// checkExecVerbs() rejects input when _userPut <= 0, not just == 0.
+	// Nested cutscenes can push _userPut negative; report that as locked.
+	out.inputLocked = (engine->_userPut <= 0);
 	out.inCutscene = (engine->vm.cutSceneStackPointer > 0);
 
 	return true;
