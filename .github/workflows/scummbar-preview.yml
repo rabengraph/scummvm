@@ -1,0 +1,98 @@
+name: Scummbar Preview
+
+on:
+  pull_request:
+    types: [labeled, unlabeled, synchronize]
+
+concurrency:
+  group: scummbar-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  pull-requests: write
+  contents: read
+
+env:
+  PREVIEW_LABEL: scummbar-preview
+  SCUMMBAR_REPO: rabengraph/scummbar
+  SCUMMBAR_REF: main
+
+jobs:
+  dismiss:
+    if: >
+      github.event.action == 'unlabeled'
+      && github.event.label.name == 'scummbar-preview'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sticky comment — preview dismissed
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: scummbar-preview
+          message: |
+            Scummbar preview dismissed — label `scummbar-preview` removed.
+            (The last deployment URL stays live on Vercel until it ages out.)
+
+  deploy:
+    if: >
+      (github.event.action == 'labeled'
+        && github.event.label.name == 'scummbar-preview')
+      || (github.event.action == 'synchronize'
+        && contains(github.event.pull_request.labels.*.name, 'scummbar-preview'))
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      FORK_BRANCH: ${{ github.event.pull_request.head.ref }}
+      FORK_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Sticky comment — building
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: scummbar-preview
+          message: |
+            Scummbar preview building for fork commit `${{ env.FORK_SHA }}`…
+            Follow progress: [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+      - name: Checkout scummbar main
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SCUMMBAR_REPO }}
+          ref: ${{ env.SCUMMBAR_REF }}
+
+      - name: Install Vercel CLI
+        run: npm i -g vercel@latest
+
+      - name: Pull Vercel project settings
+        run: vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
+
+      - name: Deploy preview
+        id: deploy
+        run: |
+          set -euo pipefail
+          URL=$(vercel deploy \
+            --build-env SCUMMVM_AGENT_BRANCH="$FORK_BRANCH" \
+            --token="$VERCEL_TOKEN" \
+            --yes)
+          echo "Preview URL: $URL"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Sticky comment — preview ready
+        if: success()
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: scummbar-preview
+          message: |
+            Scummbar preview: ${{ steps.deploy.outputs.url }}
+
+            - scummbar ref: `${{ env.SCUMMBAR_REPO }}@${{ env.SCUMMBAR_REF }}`
+            - scummvm branch: `${{ env.FORK_BRANCH }}` @ `${{ env.FORK_SHA }}`
+
+      - name: Sticky comment — deploy failed
+        if: failure()
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: scummbar-preview
+          message: |
+            Scummbar preview failed for fork commit `${{ env.FORK_SHA }}`.
+            See the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).
