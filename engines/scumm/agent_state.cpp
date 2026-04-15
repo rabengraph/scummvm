@@ -635,31 +635,88 @@ bool Collector::capture(ScummEngine *engine, Snapshot &out) {
 	// _charsetBuffer holds the full message string; _charsetBufPos is
 	// how far the engine has rendered so far (letter-by-letter display).
 	// We decode it through convertMessageToString() (same as verb text)
-	// to handle SCUMM control codes, then strip any remaining artifacts.
+	// to handle SCUMM control codes, then strip remaining artifacts.
+	//
+	// After convertMessageToString() + CharsetRenderer::addLinebreaks(),
+	// the buffer contains:
+	//   * normal printable text;
+	//   * 0xFF (or, in v <= 6, 0xFE) + 1 byte for the inline control
+	//     codes 1/2/3/8 (newline / keep-text / wait / "verb on next
+	//     line") -- 2 bytes total;
+	//   * 0xFF + 1 byte + 2 data bytes for codes 9/10/12/13/14
+	//     (start-anim, sound, set-color, set-charset) -- 4 bytes total
+	//     (6 bytes in SCUMM v8);
+	//   * 0x0D where addLinebreaks() turned a word-wrap space into a
+	//     soft line break.
+	//
+	// The previous loop assumed every 0xFF sequence was 4 bytes, so for
+	// the very common 2-byte newline (0xFF 0x01) it ate the next two
+	// real characters of dialog ("Due to" -> "e to"). It also dropped
+	// 0x0D outright, causing wrapped words to run together
+	// ("burrowing through" -> "burrowingthrough"). Honour the actual
+	// code lengths and turn every line-break flavour into '\n' so the
+	// agent sees readable multi-line text.
 	if (engine->_haveMsg != 0 && engine->_charsetBuffer[0] != 0) {
 		byte decoded[512];
 		memset(decoded, 0, sizeof(decoded));
 		engine->convertMessageToString(engine->_charsetBuffer, decoded, sizeof(decoded));
 
-		// Skip leading 0xFF control sequences.
-		const byte *msg = decoded;
-		while (*msg == 0xFF)
-			msg += 4;
-
-		// Final cleanup: strip remaining non-printable chars except
-		// newline and space, and normalize ` and ^ artifacts.
+		const bool isV8 = (engine->_game.version == 8);
 		Common::String clean;
-		for (const byte *p = msg; *p; ++p) {
+		for (const byte *p = decoded; *p; ++p) {
 			byte c = *p;
-			if (c == 0xFF) {
-				// Skip inline 0xFF control sequences (4 bytes total).
-				p += 3;
+
+			// Inline control sequence. 0xFE is only a prefix in v <= 6
+			// but treating it the same in newer versions is harmless --
+			// convertMessageToString never emits 0xFE for them.
+			if (c == 0xFF || c == 0xFE) {
+				byte code = p[1];
+				if (code == 0)
+					break;
+				switch (code) {
+				case 1: // newline
+				case 8: // "verb on next line" / soft break
+					if (!clean.empty() && clean.lastChar() != '\n')
+						clean += '\n';
+					p += 1;
+					break;
+				case 2: // keep-text
+				case 3: // wait
+					p += 1;
+					break;
+				case 9:  // start anim
+				case 10: // sound / talkie offset
+				case 12: // set color
+				case 13: // (reserved)
+				case 14: // set charset
+					p += isV8 ? 5 : 3;
+					break;
+				default:
+					// Unknown - skip just the prefix + code byte so we
+					// never overrun real text.
+					p += 1;
+					break;
+				}
 				continue;
 			}
-			if (c >= 0x20 || c == '\n') {
-				clean += (char)c;
+
+			// addLinebreaks() rewrites the word-wrap space as 0x0D.
+			// Treat both flavours of line break as '\n', collapsing
+			// runs so we don't emit blank lines.
+			if (c == '\r' || c == '\n') {
+				if (!clean.empty() && clean.lastChar() != '\n')
+					clean += '\n';
+				continue;
 			}
+
+			if (c >= 0x20)
+				clean += (char)c;
 		}
+
+		// Trim a trailing newline that a control code may have left.
+		while (!clean.empty() && clean.lastChar() == '\n')
+			clean.deleteLastChar();
+
 		out.msgText = clean;
 	}
 
