@@ -142,7 +142,9 @@ One top-level object per `window.__scummPublish(obj)` call:
       "state": 0,
       "owner": 0,              // 0 == room
       "inInventory": false,
-      "untouchable": false     // kObjectClassUntouchable
+      "untouchable": false     // true if a real click would be rejected
+                               // (class bit, v0/v1/v2 state bit, or
+                               //  broken parent-state chain)
     }
     // ...
   ],
@@ -194,7 +196,19 @@ One top-level object per `window.__scummPublish(obj)` call:
 ### Field notes
 
 - `roomObjects` only contains objects whose owner is the current room
-  (`OF_OWNER_ROOM`). Picked-up items move to `inventory`.
+  (`OF_OWNER_ROOM`) **and** that the engine is currently drawing.
+  Objects hidden by a broken parent-state chain (for example, the
+  package inside an undelivered mailbox in *Maniac Mansion*) are
+  omitted, because the player cannot see or click them either.
+  Picked-up items move to `inventory`.
+- `roomObjects[].untouchable` is true when a real player click on the
+  object would be rejected by the engine — class-level
+  `kObjectClassUntouchable`, the v0/v1/v2 `kObjectStateUntouchable`
+  state bit, or a broken parent-state chain. Visible-but-unreachable
+  scenery like the rusty key on top of the lamp in *Maniac Mansion*
+  shows up here with `untouchable: true`. The `doSentence` /
+  `clickObject` bridges refuse commands targeting `untouchable`
+  objects, matching the game's own click filter.
 - `inventory` is filtered to items owned by ego (`VAR_EGO`), so you don't
   get other characters' pockets.
 - `verbs` lists occupied verb slots only (slot 0 is the sentinel). `name`
@@ -373,6 +387,14 @@ The exported functions are marked `EMSCRIPTEN_KEEPALIVE` and accessible as
   same code path as a real mouse click on a verb.
 - `doSentence` is a convenience wrapper that clicks the verb, then the
   object(s) with appropriate timing.
+- Both `clickObject` and `doSentence` enforce the same visibility /
+  touchability filter the engine applies to a real mouse click
+  (`findObject(x, y)`): a command targeting a hidden or untouchable
+  object is dropped. `doSentence` returns `0` in that case;
+  `clickObject` is a no-op. Inventory items are always accepted —
+  they're not subject to the room-side filter. Check
+  `roomObjects[].untouchable` before issuing a command if you want
+  to know up front whether it will be honored.
 - Dialog choices appear in `verbs[]` when `haveMsg != 0`. Click them with
   `__scummClickVerb(verbs[i].id)`.
 - Check `inputLocked` and `inCutscene` before sending commands — the engine

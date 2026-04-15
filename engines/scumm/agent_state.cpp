@@ -410,11 +410,27 @@ void Collector::fillRoomObjects(ScummEngine *engine, Snapshot &out) {
 		    engine->_objectOwnerTable[info.id] != engine->OF_OWNER_ROOM) {
 			continue;
 		}
+
+		// Hide objects the engine is not currently drawing. The parent
+		// chain / state-byte mechanism is how SCUMM hides things that
+		// haven't "appeared" yet in the fiction — e.g. the package in
+		// the front-yard mailbox before the mailman lowers the flag.
+		// Exposing those would let the agent reason about objects the
+		// player can't see at all.
+		if (!engine->isObjectVisible(info.id))
+			continue;
+
 		info.owner = (engine->_objectOwnerTable &&
 		              info.id >= 0 &&
 		              info.id < engine->_numGlobalObjects)
 		             ? engine->_objectOwnerTable[info.id] : 0;
-		info.untouchable = engine->getClass(info.id, kObjectClassUntouchable);
+
+		// `untouchable` reflects the full "would findObject(x,y) reject
+		// this?" predicate — class bit OR v0/v1/v2 state bit OR broken
+		// parent chain. The old code only looked at the class bit, which
+		// missed cases like the rusty-key-on-the-lamp in Maniac Mansion
+		// (visible, but state & kObjectStateUntouchable is set).
+		info.untouchable = !engine->isObjectFindable(info.id);
 
 		out.roomObjects.push_back(info);
 	}

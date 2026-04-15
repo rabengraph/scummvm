@@ -554,6 +554,58 @@ int ScummEngine::getObjActToObjActDist(int a, int b) {
 	return getDist(x, y, x2, y2);
 }
 
+bool ScummEngine::isObjectVisible(int obj) {
+	// Mirrors drawRoomObject()'s visibility gate: the object is drawn
+	// iff its state byte is non-zero AND its parent chain resolves, i.e.
+	// each child's stored parentstate matches the parent's current state
+	// (masked). See drawRoomObject() in this file for the canonical loop.
+	int idx = getObjectIndex(obj);
+	if (idx < 0)
+		return false;
+	const ObjectData *od = &_objs[idx];
+	if (od->obj_nr < 1 || od->state == 0)
+		return false;
+
+	const int mask = (_game.version <= 2) ? kObjectStateIntrinsic : 0xF;
+	do {
+		const byte expected = od->parentstate;
+		if (od->parent == 0)
+			return true;
+		od = &_objs[od->parent];
+		if ((od->state & mask) != expected)
+			return false;
+	} while (true);
+}
+
+bool ScummEngine::isObjectFindable(int obj) {
+	// Mirrors findObject(x, y)'s per-object predicate, minus the final
+	// rectangle-contains-(x,y) test. The three filters below are the
+	// engine's own "is this clickable right now?" rules; any edit here
+	// should stay in lockstep with findObject() a few lines down.
+	int idx = getObjectIndex(obj);
+	if (idx < 0)
+		return false;
+	const ObjectData *od = &_objs[idx];
+	if (od->obj_nr < 1 || getClass(od->obj_nr, kObjectClassUntouchable))
+		return false;
+
+	if ((_game.version == 0 && OBJECT_V0_TYPE(od->obj_nr) == kObjectV0TypeFG) ||
+		(_game.version > 0 && _game.version <= 2)) {
+		if (od->state & kObjectStateUntouchable)
+			return false;
+	}
+
+	const int mask = (_game.version <= 2) ? kObjectStateIntrinsic : 0xF;
+	do {
+		const byte expected = od->parentstate;
+		if (od->parent == 0)
+			return true;
+		od = &_objs[od->parent];
+		if ((od->state & mask) != expected)
+			return false;
+	} while (true);
+}
+
 int ScummEngine::findObject(int x, int y) {
 	int i, b;
 	byte a;
