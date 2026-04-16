@@ -73,6 +73,7 @@
 #include "scumm/players/player_v4a.h"
 #include "scumm/players/player_he.h"
 #include "scumm/resource.h"
+#include "scumm/agent_bench.h"
 #include "scumm/agent_commands.h"
 #include "scumm/agent_state.h"
 #include "scumm/he/resource_he.h"
@@ -475,6 +476,20 @@ ScummEngine::ScummEngine(OSystem *syst, const DetectorResult &dr)
 		_agentRuntime->setEnabled(true);
 #endif
 
+	// --- Bench telemetry --------------------------------------------------
+	// Sister channel to the playtime telemetry above. Same gating, separate
+	// publisher (window.__scummBenchEmit on web, debug-log otherwise) so
+	// the two streams don't tangle.
+	Agent::Bench::setPublisher(Agent::Bench::createDefaultBenchPublisher());
+#ifdef ENABLE_SCUMM_AGENT
+	Agent::Bench::setEnabled(true);
+#else
+	if (Agent::telemetryEnabledByConfig())
+		Agent::Bench::setEnabled(true);
+#endif
+	Agent::Bench::emitHello((int)_game.id, (int)_game.version,
+	                        Common::String(_game.gameid ? _game.gameid : ""));
+
 	// Set up the command engine for agent action API.
 	Agent::setCommandEngine(this);
 }
@@ -482,6 +497,7 @@ ScummEngine::ScummEngine(OSystem *syst, const DetectorResult &dr)
 
 ScummEngine::~ScummEngine() {
 	Agent::clearCommandEngine();
+	Agent::Bench::shutdown();
 
 	delete _agentRuntime;
 	_agentRuntime = nullptr;
@@ -3248,6 +3264,10 @@ load_game:
 	// disabled (Runtime::tick() returns immediately).
 	if (_agentRuntime)
 		_agentRuntime->tick(this);
+
+	// Bench telemetry: emit a tick event so the harness has a stable,
+	// monotonic, pause-safe engine clock. Cheap no-op when disabled.
+	Agent::Bench::onTick();
 }
 
 #ifdef ENABLE_HE

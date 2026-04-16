@@ -2,6 +2,8 @@ MODULE := engines/scumm
 
 MODULE_OBJS := \
 	actor.o \
+	agent_bench.o \
+	agent_bench_emscripten.o \
 	agent_bridge_emscripten.o \
 	agent_commands.o \
 	agent_state.o \

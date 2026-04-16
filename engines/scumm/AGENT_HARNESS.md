@@ -420,6 +420,77 @@ wins. The authoritative surfaces are:
   `eventToJson`)
 - JS hook plumbing (outbound) → `engines/scumm/agent_bridge_emscripten.cpp`
 - Action API (inbound) → `engines/scumm/agent_commands.{h,cpp}`
+- Bench telemetry → `engines/scumm/agent_bench.{h,cpp}` (see §13)
 - Build flag → `configure`, `config.h`
 - Engine hook point → `engines/scumm/scumm.cpp` end of
   `ScummEngine::scummLoop()`
+
+---
+
+## 13. Bench telemetry surface (`window.__scummBenchEmit`)
+
+A second, narrow telemetry channel used by the game-agnostic benchmark
+described in `engines/scumm/AGENT_BENCHMARK.md`. It rides next to the
+playtime telemetry but is intentionally separate so the play-time
+schema and the bench schema can evolve independently.
+
+Same build/runtime gating as the playtime channel
+(`--enable-agent-telemetry` or `agent_telemetry` ConfMan key /
+`SCUMMVM_AGENT_TELEMETRY` env var). The harness installs **one hook**:
+
+```js
+window.__scummBenchEmit(eventObject)
+```
+
+### Event shape
+
+```jsonc
+{
+  "kind": 3,         // see table below
+  "seq": 1234,       // monotonic, separate counter from the playtime channel
+  "t": 71234567,     // g_system->getMillis()
+  "tick": 540,       // monotonic engine-tick, increments once per scummLoop
+  "payload": { /* kind-specific */ }
+}
+```
+
+`tick` is the recommended timebase for rate-based scoring — it advances
+exactly once per engine frame and is pause-safe (does not advance while
+the engine is paused at a menu), unlike `t` which is wall-clock.
+
+### Event kinds
+
+| `kind` | Name                       | Payload |
+|:---:|----------------------------|---|
+| 0 | `hello`                    | `{ "schema": 1, "gameId": 12, "gameVersion": 5, "gameName": "monkey" }` |
+| 1 | `scriptEntered`            | `{ "id": 88, "caller": 1, "where": 1, "recursive": false }` |
+| 2 | `scriptExited`             | `{ "id": 88 }` |
+| 3 | `varWritten`               | `{ "var": 100, "old": 0, "new": 1, "script": 88 }` |
+| 4 | `objectStateChanged`       | `{ "obj": 42, "old": 0, "new": 1 }` |
+| 5 | `ownerChanged`             | `{ "obj": 42, "old": 0, "new": 1 }` |
+| 6 | `sentenceResolved`         | `{ "verb": 3, "objectA": 42, "objectB": 0, "script": 28 }` |
+| 7 | `tick`                     | `null` (timing carried by the envelope's `tick` field) |
+
+### Notes
+
+- `varWritten` only fires for the scumm-vars path (`_scummVars[]`) — local
+  variables and bit/room variables are intentionally not surfaced. They
+  are either transient or rare enough that v1 doesn't pay the wire cost.
+- `objectStateChanged` and `ownerChanged` are emitted only on actual diffs
+  — flag-style writes that re-set the same value are filtered at source.
+- `scriptExited` is emitted only when an actual slot is killed, not for
+  the no-op `stopScript` call that `runScript` makes before reusing a
+  slot.
+- `sentenceResolved` is emitted unconditionally after the engine pops the
+  sentence queue, even when the dispatched sentence script is 0 (some
+  v2 game flows). The harness can derive "did this sentence have any
+  effect?" by joining against subsequent state-change events within a
+  short tick window.
+- `hello` is emitted once at engine startup. The harness should treat
+  any `kind` it doesn't recognise as forward-compat noise.
+
+### Schema versioning
+
+`hello.schema` is bumped (independently of the playtime `schema`) on
+breaking changes to the bench vocabulary. Adding new `kind` values is
+not a breaking change.

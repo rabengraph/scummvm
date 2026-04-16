@@ -24,6 +24,7 @@
 #include "common/system.h"
 
 #include "scumm/actor.h"
+#include "scumm/agent_bench.h"
 #include "scumm/object.h"
 #include "scumm/resource.h"
 #include "scumm/util.h"
@@ -102,6 +103,10 @@ void ScummEngine::runScript(int script, bool freezeResistant, bool recursive, in
 	s->cycle = cycle;
 
 	initializeLocals(slot, lvarptr);
+
+	// Bench telemetry: emit before nesting so the harness sees enter/exit
+	// in the order they actually happened.
+	Agent::Bench::onScriptEntered(script, number, scriptType, recursive);
 
 	runScriptNested(slot);
 }
@@ -267,6 +272,7 @@ void ScummEngine::stopScript(int script) {
 		return;
 
 	ss = vm.slot;
+	bool killed = false;
 	for (i = 0; i < NUM_SCRIPT_SLOT; i++, ss++) {
 		if (script == ss->number && ss->status != ssDead &&
 			(ss->where == WIO_GLOBAL || ss->where == WIO_LOCAL)) {
@@ -278,6 +284,7 @@ void ScummEngine::stopScript(int script) {
 			nukeArrays(i);
 			if (_currentScript == i)
 				_currentScript = 0xFF;
+			killed = true;
 		}
 	}
 
@@ -290,6 +297,12 @@ void ScummEngine::stopScript(int script) {
 			vm.nest[i].where = 0xFF;
 		}
 	}
+
+	// Bench telemetry: only emit when an actual slot was killed, so that
+	// the no-op stopScript-before-runScript pattern in runScript() doesn't
+	// spam the harness with ghost exits.
+	if (killed)
+		Agent::Bench::onScriptExited(script);
 }
 
 /* Stop an object script 'script'*/
@@ -782,7 +795,16 @@ void ScummEngine::writeVar(uint var, int value) {
 			}
 		}
 
+		// Bench telemetry: read old before overwriting so we can diff.
+		// Only emit when the value actually changes — flag-style vars get
+		// rewritten with the same value constantly.
+		const int oldValue = _scummVars[var];
 		_scummVars[var] = value;
+		if (oldValue != value) {
+			const int scriptId = (_currentScript != 0xFF)
+			                     ? vm.slot[_currentScript].number : 0;
+			Agent::Bench::onVarWritten((int)var, oldValue, value, scriptId);
+		}
 
 		if ((_varwatch == (int)var || _varwatch == 0) && _currentScript < NUM_SCRIPT_SLOT) {
 			if (vm.slot[_currentScript].number < 100)
@@ -1233,6 +1255,13 @@ void ScummEngine::checkAndRunSentenceScript() {
 	_currentScript = 0xFF;
 	if (sentenceScript)
 		runScript(sentenceScript, 0, 0, localParamList);
+
+	// Bench telemetry: emit after dispatch so the harness can correlate
+	// any state-change events that fired during the sentence script with
+	// this resolution. Done unconditionally — `sentenceScript == 0` still
+	// resolves the queue, just without a script run.
+	Agent::Bench::onSentenceResolved((int)st.verb, (int)st.objectA,
+	                                 (int)st.objectB, sentenceScript);
 }
 
 void ScummEngine_v0::walkToActorOrObject(int object) {

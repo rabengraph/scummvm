@@ -272,11 +272,12 @@ explicit. The two soft caveats are the v3/v4 dialog-choice classifier
 
 ---
 
-## Next steps (not yet committed)
+## Next steps
 
-1. Land the proposed `__scummBench*` hooks behind the existing
+1. ~~Land the proposed `__scummBench*` hooks behind the existing
    `--enable-agent-telemetry` flag. Schema-version them independently of
-   the play-time snapshot schema.
+   the play-time snapshot schema.~~ **Done** — see `agent_bench.{h,cpp}`,
+   `agent_bench_emscripten.cpp`, and `AGENT_HARNESS.md` §13.
 2. Build a minimal recorder on top of the existing `__scummEventsSince`
    stream that maintains the eight monotonic sets and writes a run log.
 3. Implement the run-start / run-stop handshake:

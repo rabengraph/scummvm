@@ -20,6 +20,7 @@
  */
 
 #include "scumm/actor.h"
+#include "scumm/agent_bench.h"
 #include "scumm/bomp.h"
 #include "scumm/he/intern_he.h"
 #include "scumm/object.h"
@@ -301,7 +302,10 @@ int ScummEngine::getOwner(int obj) const {
 void ScummEngine::putOwner(int obj, int owner) {
 	assertRange(0, obj, _numGlobalObjects - 1, "object");
 	assertRange(0, owner, 0xFF, "owner");
+	const int oldOwner = _objectOwnerTable[obj];
 	_objectOwnerTable[obj] = owner;
+	if (oldOwner != owner)
+		Agent::Bench::onOwnerChanged(obj, oldOwner, owner);
 }
 
 int ScummEngine::getState(int obj) {
@@ -327,7 +331,10 @@ int ScummEngine::getState(int obj) {
 void ScummEngine::putState(int obj, int state) {
 	assertRange(0, obj, _numGlobalObjects - 1, "object");
 	assertRange(0, state, 0xFF, "state");
+	const int oldState = _objectStateTable[obj];
 	_objectStateTable[obj] = state;
+	if (oldState != state)
+		Agent::Bench::onObjectStateChanged(obj, oldState, state);
 }
 
 int ScummEngine::getObjectRoom(int obj) const {
