@@ -555,18 +555,17 @@ int ScummEngine::getObjActToObjActDist(int a, int b) {
 }
 
 bool ScummEngine::isObjectVisible(int obj) {
-	// Mirrors drawRoomObject()'s visibility gate: the object is drawn
-	// iff its state byte is non-zero AND its parent chain resolves, i.e.
-	// each child's stored parentstate matches the parent's current state
-	// (masked). See drawRoomObject() in this file for the canonical loop.
+	// Mirrors drawRoomObjects()'s draw gate: for v0/v1/v2, the object is
+	// only drawn when (state & kObjectStateIntrinsic) is set — not just
+	// any non-zero state byte. For v3+, bits 0-3 serve the same purpose.
+	// See drawRoomObjects() in this file for the canonical loop.
 	int idx = getObjectIndex(obj);
 	if (idx < 0)
 		return false;
 	const ObjectData *od = &_objs[idx];
-	if (od->obj_nr < 1 || od->state == 0)
-		return false;
-
 	const int mask = (_game.version <= 2) ? kObjectStateIntrinsic : 0xF;
+	if (od->obj_nr < 1 || (od->state & mask) == 0)
+		return false;
 	do {
 		const byte expected = od->parentstate;
 		if (od->parent == 0)
