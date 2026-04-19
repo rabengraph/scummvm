@@ -1267,6 +1267,32 @@ protected:
 	int findObject(int x, int y);
 	void findObjectInRoom(FindObjectInRoom *fo, byte findWhat, uint object, uint room);
 public:
+	/**
+	 * True if the object is currently drawn on screen, i.e. its state is
+	 * non-zero AND every parent in its parent chain satisfies the stored
+	 * parentstate match. Mirrors drawRoomObject()'s visibility gate.
+	 *
+	 * Used by the agent telemetry collector to hide objects that the
+	 * engine isn't actually rendering (e.g. a mailbox's contents before
+	 * delivery), which the player can neither see nor click.
+	 */
+	bool isObjectVisible(int obj);
+
+	/**
+	 * True if a player click on this object would currently be accepted
+	 * by findObject(x, y) — i.e. the object exists, is not marked
+	 * kObjectClassUntouchable, does not have the v0/v1/v2
+	 * kObjectStateUntouchable state bit, and its parent-state chain is
+	 * intact. (The x/y bounds test is deliberately omitted so the check
+	 * can be used without a coordinate.)
+	 *
+	 * This is the game's own "is this clickable right now?" predicate.
+	 * Used by the agent command bridge to refuse sentences targeting
+	 * objects the player could not click, and by the telemetry
+	 * collector to flag objects as `untouchable` in the snapshot.
+	 */
+	bool isObjectFindable(int obj);
+
 	int getObjectOrActorWidth(int object, int &width); // Used in v4 and below
 	int getObjectOrActorXY(int object, int &x, int &y);	// Used in actor.cpp, hence public
 	int getDist(int x, int y, int x2, int y2);	// Also used in actor.cpp

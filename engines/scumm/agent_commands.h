@@ -107,6 +107,16 @@ private:
 	 * handles it on the next frame with correct _virtualMouse / VARs.
 	 */
 	static void injectClick(int roomX, int roomY);
+
+	/**
+	 * True if an object id passed to clickObject()/doSentence() is
+	 * currently reachable for the player: unset, in the player's
+	 * inventory, or findable via findObject(x, y)'s filter. Needs to
+	 * be a Commander member (not a free function) so it can reach
+	 * ScummEngine's protected `whereIsObject` through the friend
+	 * relationship.
+	 */
+	static bool isSentenceTargetReachable(int obj);
 };
 
 } // namespace Agent

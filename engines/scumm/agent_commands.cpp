@@ -88,6 +88,14 @@ void Commander::clickVerb(int verbId) {
 // ScummEngine's protected members.
 // ---------------------------------------------------------------------------
 
+bool Commander::isSentenceTargetReachable(int obj) {
+	if (obj <= 0)
+		return true;
+	if (g_commandEngine->whereIsObject(obj) == WIO_INVENTORY)
+		return true;
+	return g_commandEngine->isObjectFindable(obj);
+}
+
 void Commander::injectClick(int roomX, int roomY) {
 	// Convert room coords → screen coords for _mouse.
 	// processInput() does the inverse: _virtualMouse.x = _mouse.x + vs->xstart
@@ -123,6 +131,13 @@ void Commander::clickObject(int objectId) {
 	if (!g_commandEngine)
 		return;
 
+	// Refuse targets the player could not click right now (class bit,
+	// v0/v1/v2 state bit, or hidden parent-state chain). Mirrors the
+	// filter findObject(x, y) applies on a real mouse click — same
+	// predicate that gates doSentence() below.
+	if (!isSentenceTargetReachable(objectId))
+		return;
+
 	// Get object center coordinates (room space)
 	int x, y;
 	g_commandEngine->getObjectXYPos(objectId, x, y);
@@ -142,6 +157,19 @@ bool Commander::doSentence(int verb, int objectA, int objectB) {
 
 	// Guard against queue overflow (NUM_SENTENCE = 6).
 	if (g_commandEngine->_sentenceNum >= NUM_SENTENCE)
+		return false;
+
+	// Enforce the same visibility/touchability gate that findObject(x, y)
+	// applies on a real mouse click. Without this, the sentence bridge
+	// lets the agent pick up objects that are hidden by parent state
+	// (e.g. the package inside an undelivered mailbox) or flagged
+	// untouchable at the class/state level (e.g. the rusty key sitting
+	// on top of the lamp in Maniac Mansion). Inventory items are always
+	// allowed — they're already "in your pocket", not subject to the
+	// room-side findObject filter.
+	if (!isSentenceTargetReachable(objectA))
+		return false;
+	if (!isSentenceTargetReachable(objectB))
 		return false;
 
 	// Delegate to the engine's own doSentence(), which pushes onto the
