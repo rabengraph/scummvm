@@ -216,16 +216,7 @@ this fork:
    are reserved but unused (`agent_state.h:217`). **Add:** an event on
    cutscene begin/end before counting them.
 
-### Q6 — wasted-action detection
-
-Cheapest path is **(b)**: hook the three engine funnels —
-`putState` (`object.cpp:327`), `setOwnerOf` (`object.cpp:98`), and
-`writeVar` (`script.cpp:713`). If none fire between `doSentence` queueing
-and `checkAndRunSentenceScript` returning (`script.cpp:1166`–`1235`), the
-sentence was a no-op. There is no canonical "sentence completed" event
-yet — see Q9.
-
-### Q7 — `t` semantics
+### Timebase (was Q7)
 
 `t` is `g_system->getMillis()` at capture time (`agent_state.cpp:623`) —
 wall-clock. Under Emscripten this maps to `Date.now()` and **does not
@@ -234,58 +225,148 @@ the engine is paused at the menu. The `seq` field (`agent_state.h:169`) is
 a stable monotonic counter incremented per snapshot+event; for rate
 denominators it is the safer choice.
 
-### Q9 — proposed `__scummBench*` surface
-
-Recommend a separate publisher fed from existing engine funnels rather
-than overloading `__scummPublish`. Highest-value additions, all **cheap**
-(single hook in an existing funnel) and **universal** (v3–v6):
-
-- `scriptEntered(scriptId, callerScriptId)` / `scriptExited(scriptId)`
-  from `runScript` / `stopScript` (`script.cpp:38`, `script.cpp:262`).
-  Single source of truth for script topology.
-- `varWritten(var, old, new, scriptId)` from `writeVar`
-  (`script.cpp:713`). Catches game-flag updates that puzzles set but
-  don't reflect in object `state`.
-- `objectStateChanged(obj, old, new)` from `putState` (`object.cpp:327`).
-- `ownerChanged(obj, old, new)` from `setOwnerOf` (`object.cpp:98`).
-  Catches inventory transfers (give-to-NPC) that the harness-side
-  inventory diff currently misses.
-- `sentenceResolved(verb, objA, objB, anyEffect)` emitted at the end of
-  `checkAndRunSentenceScript` (`script.cpp:1166`). `anyEffect` rolls up
-  the put/owner/var hooks above for the cheap wasted-action signal.
-- `tickCount` — incremented once per `scummLoop` call (`scumm.cpp:3250`,
-  near the existing `_agentRuntime->tick(this)`). Engine-tick monotonic,
-  pause-safe.
-
-Skipped: room-graph / exit-topology dumps (medium cost; exits are
-script-encoded per room, not a flat static table — not worth the engine
-work for v1).
-
-### Q8 — game-specific fields
+### Game-specific fields (was Q8)
 
 None of the existing snapshot fields are silently game-specific — the
 `gameId`/`gameVersion` columns at the top of every snapshot
 (`agent_state.cpp:624`) make any future game-conditional fields
 explicit. The two soft caveats are the v3/v4 dialog-choice classifier
-(Q7 above) and `roomObjects[].box` precision (already documented in
+and `roomObjects[].box` precision (both documented in
 `AGENT_HARNESS.md` §10).
+
+---
+
+## Implementation tradeoff: harness side vs. engine side
+
+**All eight novelty primitives are derivable from the existing playtime
+stream** (`__scummPublish` / `__scummEmit`). The harness can compute the
+v1 score without any fork-side work beyond what already ships:
+
+| Primitive | Already visible via |
+|---|---|
+| rooms visited | `snapshot.room` |
+| objects seen | `snapshot.roomObjects[]` |
+| object-state transitions | diff `roomObjects[].state` across snapshots |
+| inventory firsts | `snapshot.inventory[]` |
+| actors encountered | `snapshot.actors[]` |
+| unique msg lines | `snapshot.msgText` when `haveMsg != 0` |
+| dialog branches | `snapshot.dialogChoices[]` |
+| cutscenes | `snapshot.inCutscene` false→true |
+
+The diagnostic metrics (total sentences, sentence uniqueness, plateaus,
+time-to-Nth-novelty) are similarly derivable: the harness already
+receives `sentenceChanged`, `roomChanged`, `inventoryChanged`, and
+`egoMoved` events.
+
+The one diagnostic metric that *looks* like it wants engine-internal
+data is **wasted-action detection** (Rubik's-cube ratio). Even that is
+approximable harness-side: watch for any state diff in the N snapshots
+following a `sentenceChanged(active=true)` event. ~100 ms resolution,
+good enough for a score computed over minutes.
+
+### Current engine-side status
+
+A `__scummBenchEmit` channel was landed during design exploration (commit
+[`4e01d6ae`](../..//commit/4e01d6ae), `agent_bench.{h,cpp}`,
+`agent_bench_emscripten.cpp`, `AGENT_HARNESS.md` §13). It exposes
+`scriptEntered`, `scriptExited`, `varWritten`, `objectStateChanged`,
+`ownerChanged`, `sentenceResolved`, and `tick` events. Known gaps in the
+current implementation before it could be relied on:
+
+- Hooks only `runScript`, not `runObjectScript` — misses the main
+  verb-on-object dispatch path.
+- Hooks only `stopScript`, not `stopObjectCode` / `stopObjectScript` —
+  most normal script exits are invisible.
+- The sentence payload is read from a reference after the sentence
+  script runs; if that script pushes another sentence, the payload is
+  stale.
+- Only the scumm-vars path of `writeVar` is hooked; v4+ bit variables
+  (heavily used for puzzle state) are missed.
+- No game-load / savestate signal.
+
+**Decision pending on the harness side:** if the v1 scoring function
+only needs the eight novelty primitives above, the engine-side channel
+is unnecessary — we should revert `4e01d6ae` rather than maintain a
+dark channel with gaps. If the harness has evidence that scoring needs
+engine-internal signals, we close the gaps and keep the channel.
+
+**Fork-side recommendation:** start harness-only. Come back to engine-
+side telemetry only when a concrete scoring feature demands it.
+
+---
+
+## Additional signals the fork could expose if the harness decides it wants them
+
+Beyond the `__scummBenchEmit` channel already landed, these are the
+fork-internal signals the harness might find useful for richer scoring
+or post-run analysis. Each entry gives rough cost and whether it is
+universal across v3–v6.
+
+### Tier A — genuinely engine-internal (not derivable harness-side)
+
+| Signal | Cost | Universal | Notes |
+|---|---|---|---|
+| Variable writes (scumm + bit vars) | cheap | yes | Puzzle flags that never surface to object `state`. Required for high-fidelity wasted-action detection. |
+| Script enter/exit (incl. object scripts) | cheap | yes | Script topology — which scripts ran, when, nested under which parent. Lets a scoring fn weight "reached a new script" as progress. |
+| Sentence rejection reason | cheap | yes | Distinguishes "agent tried an invalid combo" from "valid combo with no effect". Source: `getVerbEntrypoint`, `checkExecVerbs` path. |
+| Pause-safe engine-tick | cheap | yes | Monotonic, does not advance while engine is paused. Current `snapshot.t` is wall-clock and advances through pauses. |
+| Save-point fires | cheap | yes | Many SCUMM games call `VAR_AUTOSAVE` or trigger built-in save flows at checkpoints. Strong progress signal. |
+| Sound/music cue changes | cheap | yes | Music track transitions often mark plot beats. `Sound::playSound` hook. |
+
+### Tier B — derivable harness-side, but lossy or delayed
+
+| Signal | Cost | Universal | Notes |
+|---|---|---|---|
+| Per-tick object-state events | cheap | yes | Harness can already diff at ~10 Hz via snapshots. Engine-side is per-frame and loss-free. |
+| Per-tick owner-change events | cheap | yes | Same. Useful for give-to-NPC detection (currently visible only as inventory size delta). |
+| Cutscene begin/end events | cheap | yes | Harness can derive from `inCutscene` diff. Event form removes ambiguity at the boundary. |
+
+### Tier C — static dumps the harness cannot reconstruct
+
+| Signal | Cost | Universal | Notes |
+|---|---|---|---|
+| Initial state snapshot | cheap | yes | At game start, dump `_objectStateTable` + `_objectOwnerTable`. Lets the scorer compute "fraction of world objects that have ever moved" — a game-agnostic progress estimator. |
+| Per-object class flags | cheap | yes | `kObjectClassPickupable`, `kObjectClassUntouchable`, `kObjectClassPlayer`, etc. Lets the harness tell interactable objects from scenery without guessing. |
+| Verb-entrypoint matrix per room | medium | yes | For each (object, verb) pair, does the object have a verb script? Enables "coverage" scoring (fraction of valid interactions attempted). |
+| Room exit graph | medium | yes | Per room, which objects carry `kObjectClassExit`. Lets the harness build a static map and measure exploration coverage. |
+
+### Tier D — anti-farming and research signals
+
+| Signal | Cost | Universal | Notes |
+|---|---|---|---|
+| PRNG seed + state | cheap | yes | Detect replay attacks: two runs with identical input and identical seed produce identical event streams. |
+| Script hitcount per room | cheap | yes | After N runs of the same script, genuine novelty is zero. Lets the scorer down-weight hit-repetition. |
+| Walkbox-visited set | cheap | yes | Fine-grained "did the agent actually cover the room geometry" vs. just entering it. |
+| Engine-pause state | cheap | yes | Distinguish "agent thinking" from "game paused by user". Useful as a quality gate on runs. |
+
+### Recommendation on tiers
+
+If v1 shows that harness-only scoring suffices, skip all of the above.
+If scoring needs refinement, pull from Tier A and Tier C first — they
+add genuinely new information. Tier B is worth adding only for games or
+events where 10 Hz snapshot resolution proves insufficient (unlikely
+for SCUMM pacing). Tier D is useful once there are multiple agents
+competing and replay attacks become a concern.
 
 ---
 
 ## Next steps
 
-1. ~~Land the proposed `__scummBench*` hooks behind the existing
-   `--enable-agent-telemetry` flag. Schema-version them independently of
-   the play-time snapshot schema.~~ **Done** — see `agent_bench.{h,cpp}`,
-   `agent_bench_emscripten.cpp`, and `AGENT_HARNESS.md` §13.
-2. Build a minimal recorder on top of the existing `__scummEventsSince`
-   stream that maintains the eight monotonic sets and writes a run log.
-3. Implement the run-start / run-stop handshake:
+Decision point for the harness side:
+
+1. **Prototype the recorder harness-only** on top of the existing
+   `__scummPublish` / `__scummEmit` stream. Maintain the eight monotonic
+   sets, produce a run log.
+2. **Implement the run-start / run-stop handshake** (harness side):
    `__benchmarkStart({ game, budgetMinutes, agentId })`,
-   `__benchmarkStop(reason)`, plus a human End button in the overlay.
-4. Implement the hard-ceiling watchdog.
-5. Produce a scoring function that consumes the run log and emits the
-   primary score plus the diagnostic efficiency metrics.
-6. Build the per-game + suite-level (geomean) leaderboard view.
-7. Run a baseline agent + random-action agent on the same game to
-   sanity-check that the score separates them.
+   `__benchmarkStop(reason)`, human End button in the overlay.
+3. **Implement the hard-ceiling watchdog** (harness side).
+4. **Produce the scoring function** — primary score + diagnostic
+   efficiency metrics — from the run log.
+5. **Sanity-check**: baseline agent + random-action agent on the same
+   game. Scores should separate them.
+6. **Decide on engine-side telemetry.** If (4) needs a signal the
+   playtime stream can't give, pick from the tiers above and ask the
+   fork side to wire it. Otherwise, revert commit `4e01d6ae` so the
+   fork doesn't carry a dead channel.
+7. **Per-game and suite-level leaderboard** (geomean across games).
