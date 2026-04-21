@@ -663,7 +663,11 @@ bool Collector::capture(ScummEngine *engine, Snapshot &out) {
 		out.msgText = clean;
 	}
 
-	out.talkingActor = engine->getTalkingActor();
+	// getTalkingActor() calls VAR(VAR_TALK_ACTOR), which errors out when
+	// the slot is unmapped — the case on engine variants that don't use it,
+	// and briefly during loading before setupScummVars() has run. Guard the
+	// call so a telemetry snapshot can't abort the engine.
+	out.talkingActor = (engine->VAR_TALK_ACTOR != 0xFF) ? engine->getTalkingActor() : 0;
 
 	fillEgo(engine, out);
 	fillActors(engine, out);
